@@ -1,7 +1,9 @@
 package com.limbocaptcha;
 
+import com.limbocaptcha.api.ApiServer;
 import com.limbocaptcha.captcha.CaptchaManager;
 import com.limbocaptcha.config.ConfigManager;
+import com.limbocaptcha.database.DatabaseManager;
 import com.limbocaptcha.listener.PlayerListener;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
@@ -18,8 +20,8 @@ import java.nio.file.Path;
     id = "limbocaptcha",
     name = "LimboCaptcha",
     version = "1.0.0",
-    description = "Google reCaptcha v2 verification",
-    authors = {"YourName"}
+    description = "Google reCaptcha v2 verification with token API",
+    authors = {"KondrMS"}
 )
 public class LimboCaptcha {
 
@@ -27,7 +29,9 @@ public class LimboCaptcha {
     private final Logger logger;
     private final Path dataDirectory;
     private ConfigManager configManager;
+    private DatabaseManager databaseManager;
     private CaptchaManager captchaManager;
+    private ApiServer apiServer;
     private static LimboCaptcha instance;
 
     @Inject
@@ -41,19 +45,26 @@ public class LimboCaptcha {
     public void onProxyInitialization(ProxyInitializeEvent event) {
         instance = this;
         this.configManager = new ConfigManager(dataDirectory);
-        this.captchaManager = new CaptchaManager(configManager);
+        this.databaseManager = new DatabaseManager(dataDirectory);
+        this.captchaManager = new CaptchaManager(configManager, databaseManager);
+        this.apiServer = new ApiServer(configManager, captchaManager, databaseManager);
+        apiServer.start();
         server.getEventManager().register(this, new PlayerListener(this));
-        logger.info("LimboCaptcha loaded! Port: {}", configManager.getWebPort());
+        logger.info("LimboCaptcha v1.0.0 by KondrMS loaded!");
+        logger.info("Web server port: {}, API port: {}", configManager.getWebPort(), configManager.getApiPort());
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
+        if (apiServer != null) apiServer.stop();
         if (captchaManager != null) captchaManager.shutdown();
+        if (databaseManager != null) databaseManager.close();
         logger.info("LimboCaptcha disabled!");
     }
 
     public static LimboCaptcha getInstance() { return instance; }
     public ConfigManager getConfigManager() { return configManager; }
+    public DatabaseManager getDatabaseManager() { return databaseManager; }
     public CaptchaManager getCaptchaManager() { return captchaManager; }
     public ProxyServer getServer() { return server; }
     public Logger getLogger() { return logger; }
