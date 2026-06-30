@@ -27,10 +27,8 @@ public class LimboCaptcha {
     private final Path dataDirectory;
     private ConfigManager configManager;
     private CaptchaManager captchaManager;
-    private PlayerListener playerListener;
     private static LimboCaptcha instance;
 
-    @com.google.inject.Inject
     public LimboCaptcha(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
         this.server = server;
         this.logger = logger;
@@ -42,36 +40,19 @@ public class LimboCaptcha {
         instance = this;
         this.configManager = new ConfigManager(dataDirectory);
         this.captchaManager = new CaptchaManager(configManager);
-        this.playerListener = new PlayerListener(this);
-        server.getEventManager().register(this, playerListener);
-        logger.info("LimboCaptcha загружен! Порт: {}", configManager.getWebPort());
+        server.getEventManager().register(this, new PlayerListener(this));
+        logger.info("LimboCaptcha loaded! Port: {}", configManager.getWebPort());
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
-        if (captchaManager != null) {
-            captchaManager.shutdown();
-        }
-        logger.info("LimboCaptcha выключен!");
+        if (captchaManager != null) captchaManager.shutdown();
+        logger.info("LimboCaptcha disabled!");
     }
 
-    public static LimboCaptcha getInstance() { 
-        return instance; 
-    }
-    
-    public ConfigManager getConfigManager() { 
-        return configManager; 
-    }
-    
-    public CaptchaManager getCaptchaManager() { 
-        return captchaManager; 
-    }
-    
-    public ProxyServer getServer() { 
-        return server; 
-    }
-    
-    public Logger getLogger() { 
-        return logger; 
-    }
+    public static LimboCaptcha getInstance() { return instance; }
+    public ConfigManager getConfigManager() { return configManager; }
+    public CaptchaManager getCaptchaManager() { return captchaManager; }
+    public ProxyServer getServer() { return server; }
+    public Logger getLogger() { return logger; }
 }
