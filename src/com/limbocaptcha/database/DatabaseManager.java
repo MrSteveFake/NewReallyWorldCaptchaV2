@@ -36,6 +36,15 @@ public class DatabaseManager {
 
     public String createVerification(UUID playerUuid, String playerName, String token, String ip) {
         try {
+            // Удаляем старые записи этого игрока
+            PreparedStatement deleteOld = connection.prepareStatement(
+                "DELETE FROM captcha_verifications WHERE player_uuid = ? OR token = ?"
+            );
+            deleteOld.setString(1, playerUuid.toString());
+            deleteOld.setString(2, token);
+            deleteOld.executeUpdate();
+
+            // Создаем новую запись
             PreparedStatement ps = connection.prepareStatement(
                 "INSERT INTO captcha_verifications (player_uuid, player_name, token, status, ip_address) VALUES (?, ?, ?, 'pending', ?)"
             );
@@ -46,6 +55,7 @@ public class DatabaseManager {
             ps.executeUpdate();
             return token;
         } catch (SQLException e) {
+            System.err.println("[LimboCaptcha] Database insert error: " + e.getMessage());
             e.printStackTrace();
         }
         return null;
@@ -122,6 +132,20 @@ public class DatabaseManager {
             if (rs.next()) return rs.getString("player_name");
         } catch (SQLException e) {}
         return "Unknown";
+    }
+
+    public void cleanupExpired(int timeoutMinutes) {
+        try {
+            PreparedStatement ps = connection.prepareStatement(
+                "DELETE FROM captcha_verifications WHERE status = 'pending' AND created_at < datetime('now', '-" + timeoutMinutes + " minutes')"
+            );
+            int deleted = ps.executeUpdate();
+            if (deleted > 0) {
+                System.out.println("[LimboCaptcha] Cleaned up " + deleted + " expired tokens");
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
     }
 
     public void close() {
