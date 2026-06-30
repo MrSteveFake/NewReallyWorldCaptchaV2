@@ -1,11 +1,16 @@
+# LimboCaptcha Configuration by KondrMS
 recaptcha:
   site-key: "your-site-key-here"
   secret-key: "your-secret-key-here"
-  url-format: "http://localhost:${port}/captcha.html"
+  url-format: "https://your-site.com/captcha?token=${token}"
   timeout-minutes: 5
 webserver:
   port: 8080
+  api-port: 8081
+settings:
+  target-server: "lobby"
 messages:
-  captcha-message: "&eПожалуйста, пройдите капчу:"
-  success-message: "&aКапча пройдена!"
-  kick-message: "&cВремя истекло!"
+  captcha-message: "&ePlease pass captcha:"
+  success-message: "&aCaptcha passed! Welcome!"
+  kick-message: "&cCaptcha timeout!"
+  fail-kick-message: "&cCaptcha verification failed!"
