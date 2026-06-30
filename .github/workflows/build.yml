@@ -29,7 +29,10 @@ jobs:
         # Velocity API
         wget -q -O libs/velocity-api.jar https://repo.papermc.io/repository/maven-public/com/velocitypowered/velocity-api/3.4.0/velocity-api-3.4.0.jar
         
-        # Guava (ОБЯЗАТЕЛЬНО!)
+        # Gson (нужен Velocity)
+        wget -q -O libs/gson.jar https://repo1.maven.org/maven2/com/google/code/gson/gson/2.10.1/gson-2.10.1.jar
+        
+        # Guava
         wget -q -O libs/guava.jar https://repo1.maven.org/maven2/com/google/guava/guava/33.0.0-jre/guava-33.0.0-jre.jar
         
         # Adventure API
@@ -39,20 +42,19 @@ jobs:
         # SLF4J
         wget -q -O libs/slf4j-api.jar https://repo1.maven.org/maven2/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar
         
-        # Configurate (для YAML)
-        wget -q -O libs/configurate-core.jar https://repo1.maven.org/maven2/org/spongepowered/configurate-core/4.1.2/configurate-core-4.1.2.jar
-        wget -q -O libs/configurate-yaml.jar https://repo1.maven.org/maven2/org/spongepowered/configurate-yaml/4.1.2/configurate-yaml-4.1.2.jar
-        
-        # SnakeYAML
-        wget -q -O libs/snakeyaml.jar https://repo1.maven.org/maven2/org/yaml/snakeyaml/2.2/snakeyaml-2.2.jar
-        
-        # Checker Qual (нужен Guava)
+        # Checker Qual
         wget -q -O libs/checker-qual.jar https://repo1.maven.org/maven2/org/checkerframework/checker-qual/3.41.0/checker-qual-3.41.0.jar
         
-        # FailureAccess (нужен Guava)
+        # FailureAccess
         wget -q -O libs/failureaccess.jar https://repo1.maven.org/maven2/com/google/guava/failureaccess/1.0.2/failureaccess-1.0.2.jar
         
-        echo "Все библиотеки скачаны:"
+        # Error Prone (нужен Guava)
+        wget -q -O libs/error-prone-annotations.jar https://repo1.maven.org/maven2/com/google/errorprone/error_prone_annotations/2.23.0/error_prone_annotations-2.23.0.jar
+        
+        # JSR305
+        wget -q -O libs/jsr305.jar https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar
+        
+        echo "Все библиотеки:"
         ls -la libs/
     
     - name: Compile Java
@@ -63,42 +65,40 @@ jobs:
         done
         
         find . -name "*.java" -type f > sources.txt
-        echo "Компилируемые файлы:"
+        echo "Файлы для компиляции:"
         cat sources.txt
         
         javac -d build -cp "${CLASSPATH#:}" @sources.txt
-        echo "Компиляция завершена!"
+        echo "✓ Компиляция завершена"
     
     - name: Copy resources
       run: |
-        PLUGIN_JSON=$(find . -name "velocity-plugin.json" -type f)
-        CONFIG_YML=$(find . -name "config.yml" -type f)
-        cp "$PLUGIN_JSON" build/
-        cp "$CONFIG_YML" build/
-        echo "Ресурсы скопированы"
+        cp $(find . -name "velocity-plugin.json" -type f) build/
+        cp $(find . -name "config.yml" -type f) build/
+        echo "✓ Ресурсы скопированы"
     
     - name: Create fat JAR
       run: |
-        # Распаковываем все библиотеки
         mkdir -p build/merged
         cd build/merged
         
+        # Распаковка всех библиотек
         for jar in ../../libs/*.jar; do
-          jar xf "$jar"
+          jar xf "$jar" 2>/dev/null
         done
         
-        # Добавляем скомпилированный код
-        cp -r ../com ../config.yml ../velocity-plugin.json . 2>/dev/null
+        # Копирование кода плагина
+        cp -r ../com ../velocity-plugin.json ../config.yml . 2>/dev/null
         
-        # Удаляем конфликты
+        # Удаление конфликтов
         rm -rf META-INF
         rm -f module-info.class
         
-        # Создаем финальный JAR
+        # Создание JAR
         jar cf ../LimboCaptcha.jar *
         cd ../..
         
-        echo "JAR создан!"
+        echo "✓ JAR создан"
         ls -lh build/LimboCaptcha.jar
     
     - name: Upload artifact
