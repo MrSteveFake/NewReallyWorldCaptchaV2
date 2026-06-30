@@ -1,6 +1,7 @@
 package com.limbocaptcha.captcha;
 
 import com.limbocaptcha.config.ConfigManager;
+import com.limbocaptcha.database.DatabaseManager;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
@@ -15,29 +16,46 @@ import java.util.concurrent.TimeUnit;
 public class CaptchaManager {
 
     private final ConfigManager configManager;
+    private final DatabaseManager databaseManager;
     private final WebServer webServer;
     private final Map<UUID, CompletableFuture<Boolean>> pending;
+    private final Map<UUID, String> playerTokens;
 
-    public CaptchaManager(ConfigManager configManager) {
+    public CaptchaManager(ConfigManager configManager, DatabaseManager databaseManager) {
         this.configManager = configManager;
+        this.databaseManager = databaseManager;
         this.pending = new ConcurrentHashMap<>();
-        this.webServer = new WebServer(configManager, this);
+        this.playerTokens = new ConcurrentHashMap<>();
+        this.webServer = new WebServer(configManager, databaseManager, this);
         webServer.start();
+    }
+
+    public String createToken(UUID uuid, String playerName, String ip) {
+        String token = uuid.toString() + "_" + playerName;
+        playerTokens.put(uuid, token);
+        databaseManager.createVerification(uuid, playerName, token, ip);
+        return token;
     }
 
     public CompletableFuture<Boolean> requestVerification(UUID uuid) {
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         pending.put(uuid, future);
         future.orTimeout(configManager.getCaptchaTimeout(), TimeUnit.MINUTES)
-            .exceptionally(t -> { pending.remove(uuid); return false; });
+            .exceptionally(t -> { 
+                pending.remove(uuid); 
+                playerTokens.remove(uuid); 
+                return false; 
+            });
         return future;
     }
 
-    public boolean verifyCaptcha(String response) {
-        if (response == null || response.isEmpty()) return false;
+    public boolean verifyCaptcha(String token, String recaptchaResponse) {
+        if (token == null || recaptchaResponse == null || recaptchaResponse.isEmpty()) return false;
+        if (!databaseManager.isValidToken(token)) return false;
+
         try {
             String params = "secret=" + URLEncoder.encode(configManager.getSecretKey(), StandardCharsets.UTF_8)
-                + "&response=" + URLEncoder.encode(response, StandardCharsets.UTF_8);
+                + "&response=" + URLEncoder.encode(recaptchaResponse, StandardCharsets.UTF_8);
             HttpURLConnection conn = (HttpURLConnection) new URI(
                 "https://www.google.com/recaptcha/api/siteverify").toURL().openConnection();
             conn.setRequestMethod("POST");
@@ -58,16 +76,37 @@ public class CaptchaManager {
         return false;
     }
 
-    public void complete(UUID uuid, boolean success) {
-        CompletableFuture<Boolean> f = pending.remove(uuid);
-        if (f != null && !f.isDone()) f.complete(success);
+    public void markSuccess(String token) {
+        databaseManager.markSuccess(token);
+        String uuid = databaseManager.getPlayerUUIDByToken(token);
+        if (uuid != null) {
+            UUID playerUuid = UUID.fromString(uuid);
+            CompletableFuture<Boolean> f = pending.get(playerUuid);
+            if (f != null && !f.isDone()) f.complete(true);
+        }
+    }
+
+    public void markFailed(String token) {
+        databaseManager.markFailed(token);
+        String uuid = databaseManager.getPlayerUUIDByToken(token);
+        if (uuid != null) {
+            UUID playerUuid = UUID.fromString(uuid);
+            CompletableFuture<Boolean> f = pending.get(playerUuid);
+            if (f != null && !f.isDone()) f.complete(false);
+        }
+    }
+
+    public String getPlayerNameByToken(String token) {
+        return databaseManager.getPlayerNameByToken(token);
     }
 
     public void shutdown() {
         pending.values().forEach(f -> { if (!f.isDone()) f.complete(false); });
         pending.clear();
+        playerTokens.clear();
         webServer.stop();
     }
 
     public ConfigManager getConfigManager() { return configManager; }
+    public DatabaseManager getDatabaseManager() { return databaseManager; }
 }
