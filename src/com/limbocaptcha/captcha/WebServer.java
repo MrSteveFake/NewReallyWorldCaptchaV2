@@ -1,6 +1,5 @@
 package com.limbocaptcha.captcha;
 
-import com.limbocaptcha.LimboCaptcha;
 import com.limbocaptcha.config.ConfigManager;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -15,10 +14,12 @@ import java.nio.charset.StandardCharsets;
 public class WebServer {
 
     private final ConfigManager configManager;
+    private final CaptchaManager captchaManager;
     private HttpServer server;
 
-    public WebServer(ConfigManager configManager) {
+    public WebServer(ConfigManager configManager, CaptchaManager captchaManager) {
         this.configManager = configManager;
+        this.captchaManager = captchaManager;
     }
 
     public void start() {
@@ -28,13 +29,17 @@ public class WebServer {
             server.createContext("/verify", new VerifyHandler());
             server.setExecutor(null);
             server.start();
+            System.out.println("[LimboCaptcha] Web server started on port " + configManager.getWebPort());
         } catch (IOException e) {
-            System.err.println("WebServer error: " + e.getMessage());
+            System.err.println("[LimboCaptcha] WebServer error: " + e.getMessage());
         }
     }
 
     public void stop() {
-        if (server != null) server.stop(0);
+        if (server != null) {
+            server.stop(0);
+            System.out.println("[LimboCaptcha] Web server stopped");
+        }
     }
 
     class PageHandler implements HttpHandler {
@@ -51,9 +56,9 @@ public class WebServer {
                 "button{background:#1e3c72;color:white;border:none;padding:12px 30px;" +
                 "border-radius:25px;font-size:16px;cursor:pointer;margin-top:15px;}" +
                 "</style></head><body><div class='box'>" +
-                "<h2>Защита от ботов</h2><p>Подтвердите что вы человек</p>" +
+                "<h2>Bot Protection</h2><p>Please verify you are human</p>" +
                 "<form action='/verify' method='POST'><div class='g-recaptcha' data-sitekey='" + key + "'>" +
-                "</div><br><button type='submit'>Подтвердить</button></form>" +
+                "</div><br><button type='submit'>Verify</button></form>" +
                 "</div></body></html>";
 
             ex.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
@@ -79,7 +84,7 @@ public class WebServer {
                 }
             }
 
-            boolean ok = LimboCaptcha.getInstance().getCaptchaManager().verifyCaptcha(recaptcha);
+            boolean ok = captchaManager.verifyCaptcha(recaptcha);
 
             String html = ok ?
                 "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>OK</title>" +
@@ -87,7 +92,7 @@ public class WebServer {
                 "align-items:center;height:100vh;font-family:sans-serif;}" +
                 ".box{background:white;padding:40px;border-radius:20px;text-align:center;}" +
                 "h1{font-size:64px;}h2{color:#155724;}</style></head><body>" +
-                "<div class='box'><h1>OK</h1><h2>Проверка пройдена!</h2></div></body></html>"
+                "<div class='box'><h1>OK</h1><h2>Verification passed!</h2></div></body></html>"
                 :
                 "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Error</title>" +
                 "<style>body{background:#f8d7da;display:flex;justify-content:center;" +
@@ -97,7 +102,7 @@ public class WebServer {
                 "a{display:inline-block;margin-top:20px;padding:10px 20px;background:#007bff;" +
                 "color:white;text-decoration:none;border-radius:10px;}" +
                 "</style></head><body><div class='box'>" +
-                "<h1>ERR</h1><h2>Ошибка</h2><a href='/captcha.html'>Назад</a></div></body></html>";
+                "<h1>ERR</h1><h2>Error</h2><a href='/captcha.html'>Try again</a></div></body></html>";
 
             ex.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
             byte[] resp = html.getBytes(StandardCharsets.UTF_8);
