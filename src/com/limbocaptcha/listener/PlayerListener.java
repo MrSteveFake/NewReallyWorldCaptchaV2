@@ -3,6 +3,7 @@ package com.limbocaptcha.listener;
 import com.limbocaptcha.LimboCaptcha;
 import com.velocitypowered.api.event.PostOrder;
 import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.player.PlayerChatEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
@@ -41,6 +42,13 @@ public class PlayerListener {
             .buildTask(plugin, () -> sendCaptcha(player))
             .delay(1, TimeUnit.SECONDS)
             .schedule();
+    }
+
+    @Subscribe
+    public void onDisconnect(DisconnectEvent event) {
+        UUID uuid = event.getPlayer().getUniqueId();
+        passed.remove(uuid);
+        pending.remove(uuid);
     }
 
     @Subscribe(order = PostOrder.FIRST)
