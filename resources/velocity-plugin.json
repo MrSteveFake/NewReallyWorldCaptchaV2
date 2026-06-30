@@ -2,7 +2,7 @@
   "id": "limbocaptcha",
   "name": "LimboCaptcha",
   "version": "1.0.0",
-  "description": "Google reCaptcha v2 verification",
-  "authors": ["YourName"],
+  "description": "Google reCaptcha v2 verification with token API",
+  "authors": ["KondrMS"],
   "main": "com.limbocaptcha.LimboCaptcha"
 }
