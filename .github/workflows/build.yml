@@ -1,0 +1,62 @@
+name: Build LimboCaptcha
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup Java 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    
+    - name: Create directories
+      run: |
+        mkdir -p libs
+        mkdir -p build
+    
+    - name: Download dependencies
+      run: |
+        wget -q -O libs/velocity-api.jar https://repo.papermc.io/repository/maven-public/com/velocitypowered/velocity-api/3.4.0/velocity-api-3.4.0.jar
+        wget -q -O libs/adventure-api.jar https://repo1.maven.org/maven2/net/kyori/adventure-api/4.16.0/adventure-api-4.16.0.jar
+        wget -q -O libs/adventure-legacy.jar https://repo1.maven.org/maven2/net/kyori/adventure-text-serializer-legacy/4.16.0/adventure-text-serializer-legacy-4.16.0.jar
+        wget -q -O libs/slf4j-api.jar https://repo1.maven.org/maven2/org/slf4j/slf4j-api/2.0.9/slf4j-api-2.0.9.jar
+    
+    - name: Compile Java
+      run: |
+        CLASSPATH=""
+        for jar in libs/*.jar; do
+          CLASSPATH="$CLASSPATH:$jar"
+        done
+        find . -name "*.java" -type f > sources.txt
+        cat sources.txt
+        javac -d build -cp "${CLASSPATH#:}" @sources.txt
+    
+    - name: Copy resources
+      run: |
+        PLUGIN_JSON=$(find . -name "velocity-plugin.json" -type f)
+        CONFIG_YML=$(find . -name "config.yml" -type f)
+        cp "$PLUGIN_JSON" build/
+        cp "$CONFIG_YML" build/
+    
+    - name: Create JAR
+      run: |
+        cd build
+        jar cf LimboCaptcha.jar *
+        cd ..
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: LimboCaptcha
+        path: build/LimboCaptcha.jar
+        retention-days: 90
