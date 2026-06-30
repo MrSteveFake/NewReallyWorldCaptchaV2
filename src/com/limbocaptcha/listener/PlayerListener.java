@@ -35,8 +35,9 @@ public class PlayerListener {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        if (passed.contains(uuid)) return;
+        // Всегда отправляем капчу при входе
         pending.add(uuid);
+        passed.remove(uuid); // Сбрасываем предыдущий статус
 
         plugin.getServer().getScheduler()
             .buildTask(plugin, () -> sendCaptcha(player))
@@ -49,6 +50,7 @@ public class PlayerListener {
         UUID uuid = event.getPlayer().getUniqueId();
         passed.remove(uuid);
         pending.remove(uuid);
+        plugin.getCaptchaManager().cancelVerification(uuid);
     }
 
     @Subscribe(order = PostOrder.FIRST)
@@ -93,8 +95,10 @@ public class PlayerListener {
         plugin.getLogger().info("[CAPTCHA] Player {} [{}] - Token: {} - IP: {}", 
             player.getUsername(), uuid, token, ip);
 
+        player.sendMessage(Component.text("", NamedTextColor.GOLD));
         player.sendMessage(Component.text(msg, NamedTextColor.YELLOW));
         player.sendMessage(Component.text(url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
+        player.sendMessage(Component.text("", NamedTextColor.GOLD));
 
         plugin.getCaptchaManager().requestVerification(uuid)
             .orTimeout(plugin.getConfigManager().getCaptchaTimeout(), TimeUnit.MINUTES)
@@ -115,7 +119,11 @@ public class PlayerListener {
                     }
                 } else {
                     plugin.getLogger().info("[CAPTCHA] Player {} FAILED verification!", player.getUsername());
-                    kick(player, plugin.getConfigManager().getFailKickMessage().replace("&", "§"));
+                    // Не кикаем при провале, даем шанс заново
+                    player.sendMessage(Component.text("", NamedTextColor.RED));
+                    player.sendMessage(Component.text("Captcha failed! You can try again by reconnecting.", NamedTextColor.RED));
+                    player.sendMessage(Component.text("", NamedTextColor.RED));
+                    passed.remove(uuid);
                 }
             })
             .exceptionally(t -> {
