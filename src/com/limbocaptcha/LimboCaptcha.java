@@ -9,6 +9,7 @@ import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
+import jakarta.inject.Inject;
 import org.slf4j.Logger;
 
 import java.nio.file.Path;
@@ -29,6 +30,7 @@ public class LimboCaptcha {
     private CaptchaManager captchaManager;
     private static LimboCaptcha instance;
 
+    @Inject
     public LimboCaptcha(ProxyServer server, Logger logger, @DataDirectory Path dataDirectory) {
         this.server = server;
         this.logger = logger;
