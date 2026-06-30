@@ -31,6 +31,15 @@ public class CaptchaManager {
     }
 
     public String createToken(UUID uuid, String playerName, String ip) {
+        // Удаляем старый токен
+        String oldToken = playerTokens.remove(uuid);
+        if (oldToken != null) {
+            CompletableFuture<Boolean> oldFuture = pending.remove(uuid);
+            if (oldFuture != null && !oldFuture.isDone()) {
+                oldFuture.complete(false);
+            }
+        }
+
         String token = uuid.toString() + "_" + playerName;
         playerTokens.put(uuid, token);
         databaseManager.createVerification(uuid, playerName, token, ip);
@@ -38,6 +47,11 @@ public class CaptchaManager {
     }
 
     public CompletableFuture<Boolean> requestVerification(UUID uuid) {
+        CompletableFuture<Boolean> oldFuture = pending.remove(uuid);
+        if (oldFuture != null && !oldFuture.isDone()) {
+            oldFuture.complete(false);
+        }
+
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         pending.put(uuid, future);
         future.orTimeout(configManager.getCaptchaTimeout(), TimeUnit.MINUTES)
@@ -49,50 +63,93 @@ public class CaptchaManager {
         return future;
     }
 
+    public void cancelVerification(UUID uuid) {
+        CompletableFuture<Boolean> f = pending.remove(uuid);
+        if (f != null && !f.isDone()) f.complete(false);
+        playerTokens.remove(uuid);
+    }
+
     public boolean verifyCaptcha(String token, String recaptchaResponse) {
-        if (token == null || recaptchaResponse == null || recaptchaResponse.isEmpty()) return false;
-        if (!databaseManager.isValidToken(token)) return false;
+        if (token == null || recaptchaResponse == null || recaptchaResponse.isEmpty()) {
+            System.out.println("[LimboCaptcha] verifyCaptcha: token or response is null/empty");
+            return false;
+        }
+        if (!databaseManager.isValidToken(token)) {
+            System.out.println("[LimboCaptcha] verifyCaptcha: token " + token + " is not valid");
+            return false;
+        }
 
         try {
             String params = "secret=" + URLEncoder.encode(configManager.getSecretKey(), StandardCharsets.UTF_8)
                 + "&response=" + URLEncoder.encode(recaptchaResponse, StandardCharsets.UTF_8);
+            
             HttpURLConnection conn = (HttpURLConnection) new URI(
                 "https://www.google.com/recaptcha/api/siteverify").toURL().openConnection();
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(10000);
             conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+            
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(params.getBytes(StandardCharsets.UTF_8));
+                os.flush();
             }
-            if (conn.getResponseCode() == 200) {
+            
+            int responseCode = conn.getResponseCode();
+            System.out.println("[LimboCaptcha] Google reCAPTCHA response code: " + responseCode);
+            
+            if (responseCode == 200) {
                 String body = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-                return body.contains("\"success\": true") || body.contains("\"success\":true");
+                System.out.println("[LimboCaptcha] Google reCAPTCHA response: " + body);
+                boolean success = body.contains("\"success\": true") || body.contains("\"success\":true");
+                System.out.println("[LimboCaptcha] Captcha verification result: " + success);
+                return success;
+            } else {
+                System.out.println("[LimboCaptcha] Google reCAPTCHA error response: " + responseCode);
             }
         } catch (Exception e) {
-            System.err.println("Captcha error: " + e.getMessage());
+            System.err.println("[LimboCaptcha] Captcha verification error: " + e.getMessage());
+            e.printStackTrace();
         }
         return false;
     }
 
     public void markSuccess(String token) {
         databaseManager.markSuccess(token);
-        String uuid = databaseManager.getPlayerUUIDByToken(token);
-        if (uuid != null) {
-            UUID playerUuid = UUID.fromString(uuid);
-            CompletableFuture<Boolean> f = pending.get(playerUuid);
-            if (f != null && !f.isDone()) f.complete(true);
+        String uuidStr = databaseManager.getPlayerUUIDByToken(token);
+        System.out.println("[LimboCaptcha] markSuccess for token: " + token + ", player: " + uuidStr);
+        if (uuidStr != null) {
+            try {
+                UUID playerUuid = UUID.fromString(uuidStr);
+                CompletableFuture<Boolean> f = pending.get(playerUuid);
+                if (f != null && !f.isDone()) {
+                    f.complete(true);
+                    System.out.println("[LimboCaptcha] Completed future for player: " + playerUuid);
+                } else {
+                    System.out.println("[LimboCaptcha] No pending future for player: " + playerUuid);
+                }
+            } catch (IllegalArgumentException e) {
+                System.err.println("[LimboCaptcha] Invalid UUID: " + uuidStr);
+            }
         }
     }
 
     public void markFailed(String token) {
         databaseManager.markFailed(token);
-        String uuid = databaseManager.getPlayerUUIDByToken(token);
-        if (uuid != null) {
-            UUID playerUuid = UUID.fromString(uuid);
-            CompletableFuture<Boolean> f = pending.get(playerUuid);
-            if (f != null && !f.isDone()) f.complete(false);
+        String uuidStr = databaseManager.getPlayerUUIDByToken(token);
+        System.out.println("[LimboCaptcha] markFailed for token: " + token + ", player: " + uuidStr);
+        if (uuidStr != null) {
+            try {
+                UUID playerUuid = UUID.fromString(uuidStr);
+                CompletableFuture<Boolean> f = pending.get(playerUuid);
+                if (f != null && !f.isDone()) {
+                    f.complete(false);
+                    System.out.println("[LimboCaptcha] Failed future for player: " + playerUuid);
+                }
+            } catch (IllegalArgumentException e) {
+                System.err.println("[LimboCaptcha] Invalid UUID: " + uuidStr);
+            }
         }
     }
 
