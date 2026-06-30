@@ -1,0 +1,11 @@
+recaptcha:
+  site-key: "your-site-key-here"
+  secret-key: "your-secret-key-here"
+  url-format: "http://localhost:${port}/captcha.html"
+  timeout-minutes: 5
+webserver:
+  port: 8080
+messages:
+  captcha-message: "&eПожалуйста, пройдите капчу:"
+  success-message: "&aКапча пройдена!"
+  kick-message: "&cВремя истекло!"
