@@ -1,0 +1,8 @@
+{
+  "id": "limbocaptcha",
+  "name": "LimboCaptcha",
+  "version": "1.0.0",
+  "description": "Google reCaptcha v2 verification",
+  "authors": ["YourName"],
+  "main": "com.limbocaptcha.LimboCaptcha"
+}
