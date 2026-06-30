@@ -21,7 +21,7 @@ public class CaptchaManager {
     public CaptchaManager(ConfigManager configManager) {
         this.configManager = configManager;
         this.pending = new ConcurrentHashMap<>();
-        this.webServer = new WebServer(configManager);
+        this.webServer = new WebServer(configManager, this);
         webServer.start();
     }
 
