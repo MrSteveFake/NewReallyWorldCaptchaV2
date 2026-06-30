@@ -43,6 +43,7 @@ public class ApiServer {
             System.out.println("[LimboCaptcha] API server started on port " + configManager.getApiPort());
         } catch (IOException e) {
             System.err.println("[LimboCaptcha] API server error: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -53,10 +54,13 @@ public class ApiServer {
     class VerifyHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange ex) throws IOException {
+            // CORS preflight
             if ("OPTIONS".equals(ex.getRequestMethod())) {
                 sendCors(ex);
                 return;
             }
+
+            System.out.println("[LimboCaptcha API] Received " + ex.getRequestMethod() + " request from " + ex.getRemoteAddress());
 
             if (!"POST".equals(ex.getRequestMethod())) {
                 sendJson(ex, 405, "{\"error\":\"Method not allowed\"}");
@@ -64,16 +68,22 @@ public class ApiServer {
             }
 
             String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            System.out.println("[LimboCaptcha API] Request body: " + body);
+
             Map<String, String> params = parseFormData(body);
 
             String token = params.get("token");
             String recaptchaResponse = params.get("g-recaptcha-response");
+
+            System.out.println("[LimboCaptcha API] Token: " + token);
+            System.out.println("[LimboCaptcha API] reCAPTCHA response length: " + (recaptchaResponse != null ? recaptchaResponse.length() : 0));
 
             JsonObject response = new JsonObject();
 
             if (token == null || recaptchaResponse == null) {
                 response.addProperty("success", false);
                 response.addProperty("error", "Missing token or captcha response");
+                System.out.println("[LimboCaptcha API] Missing parameters");
                 sendJson(ex, 400, gson.toJson(response));
                 return;
             }
@@ -86,14 +96,16 @@ public class ApiServer {
                 captchaManager.markSuccess(token);
                 response.addProperty("message", "Verification passed");
                 response.addProperty("player", captchaManager.getPlayerNameByToken(token));
-                System.out.println("[LimboCaptcha] Player " + captchaManager.getPlayerNameByToken(token) + " PASSED verification");
+                System.out.println("[LimboCaptcha API] Verification PASSED for player: " + captchaManager.getPlayerNameByToken(token));
             } else {
                 captchaManager.markFailed(token);
                 response.addProperty("message", "Verification failed");
-                System.out.println("[LimboCaptcha] Token " + token + " FAILED verification");
+                System.out.println("[LimboCaptcha API] Verification FAILED");
             }
 
-            sendJson(ex, 200, gson.toJson(response));
+            String jsonResponse = gson.toJson(response);
+            System.out.println("[LimboCaptcha API] Response: " + jsonResponse);
+            sendJson(ex, 200, jsonResponse);
         }
     }
 
@@ -109,6 +121,8 @@ public class ApiServer {
             String token = getQueryParam(query, "token");
             JsonObject response = new JsonObject();
 
+            System.out.println("[LimboCaptcha API] Check token: " + token);
+
             if (token == null) {
                 response.addProperty("valid", false);
                 response.addProperty("error", "No token provided");
@@ -117,7 +131,11 @@ public class ApiServer {
                 response.addProperty("valid", valid);
                 response.addProperty("token", token);
                 if (valid) {
-                    response.addProperty("player", databaseManager.getPlayerNameByToken(token));
+                    String playerName = databaseManager.getPlayerNameByToken(token);
+                    response.addProperty("player", playerName);
+                    System.out.println("[LimboCaptcha API] Token valid for player: " + playerName);
+                } else {
+                    System.out.println("[LimboCaptcha API] Token NOT valid");
                 }
             }
 
@@ -167,7 +185,8 @@ public class ApiServer {
         for (String p : body.split("&")) {
             String[] kv = p.split("=", 2);
             if (kv.length == 2) {
-                params.put(kv[0], URLDecoder.decode(kv[1], StandardCharsets.UTF_8));
+                params.put(URLDecoder.decode(kv[0], StandardCharsets.UTF_8), 
+                          URLDecoder.decode(kv[1], StandardCharsets.UTF_8));
             }
         }
         return params;
@@ -176,13 +195,15 @@ public class ApiServer {
     private void sendCors(HttpExchange ex) throws IOException {
         ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
         ex.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+        ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
         ex.sendResponseHeaders(204, -1);
     }
 
     private void sendJson(HttpExchange ex, int code, String json) throws IOException {
         ex.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
         ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        ex.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
         byte[] resp = json.getBytes(StandardCharsets.UTF_8);
         ex.sendResponseHeaders(code, resp.length);
         try (OutputStream os = ex.getResponseBody()) {
