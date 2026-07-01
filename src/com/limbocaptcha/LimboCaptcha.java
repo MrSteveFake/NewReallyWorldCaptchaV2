@@ -1,5 +1,6 @@
 package com.limbocaptcha;
 
+import com.limbocaptcha.api.ApiServer;
 import com.limbocaptcha.captcha.CaptchaManager;
 import com.limbocaptcha.config.ConfigManager;
 import com.limbocaptcha.database.DatabaseManager;
@@ -24,6 +25,7 @@ public class LimboCaptcha {
     private ConfigManager configManager;
     private DatabaseManager databaseManager;
     private CaptchaManager captchaManager;
+    private ApiServer apiServer;
     private static LimboCaptcha instance;
 
     @Inject
@@ -36,26 +38,21 @@ public class LimboCaptcha {
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) {
         instance = this;
-        this.configManager = new ConfigManager(dataDirectory);
-        
-        // Подключение к MySQL
-        this.databaseManager = new DatabaseManager(
-            configManager.getMysqlHost(),
-            configManager.getMysqlPort(),
-            configManager.getMysqlDatabase(),
-            configManager.getMysqlUser(),
-            configManager.getMysqlPassword()
-        );
-        
-        this.captchaManager = new CaptchaManager(configManager, databaseManager);
+        configManager = new ConfigManager(dataDirectory);
+        databaseManager = new DatabaseManager(dataDirectory);
+        captchaManager = new CaptchaManager(configManager, databaseManager);
+        apiServer = new ApiServer(configManager, captchaManager, databaseManager);
+        apiServer.start();
         server.getEventManager().register(this, new PlayerListener(this));
-        logger.info("LimboCaptcha loaded with MySQL integration!");
+        logger.info("LimboCaptcha loaded! SQLite + API on port {}", configManager.getApiPort());
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
+        if (apiServer != null) apiServer.stop();
         if (captchaManager != null) captchaManager.shutdown();
         if (databaseManager != null) databaseManager.close();
+        logger.info("LimboCaptcha disabled!");
     }
 
     public static LimboCaptcha getInstance() { return instance; }
