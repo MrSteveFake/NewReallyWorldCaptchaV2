@@ -30,52 +30,74 @@ public class PlayerListener {
         this.plugin = plugin;
     }
 
-    @Subscribe(order = PostOrder.FIRST)
+    @Subscribe(order = PostOrder.LAST)
     public void onLogin(LoginEvent event) {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        plugin.getLogger().info("[CAPTCHA] {} connected - sending captcha", player.getUsername());
+        // Если уже прошел капчу - пропускаем
+        if (passed.contains(uuid)) {
+            return;
+        }
 
-        // Всегда отправляем капчу при входе
-        passed.remove(uuid);
-        pending.add(uuid);
+        plugin.getLogger().info("[CAPTCHA] {} logged in - waiting for auth", player.getUsername());
+    }
 
-        plugin.getServer().getScheduler()
-            .buildTask(plugin, () -> sendCaptcha(player))
-            .delay(1, TimeUnit.SECONDS)
-            .schedule();
+    @Subscribe(order = PostOrder.LAST)
+    public void onServerConnected(ServerConnectedEvent event) {
+        Player player = event.getPlayer();
+        UUID uuid = player.getUniqueId();
+        String serverName = event.getServer().getServerInfo().getName();
+
+        plugin.getLogger().info("[CAPTCHA] {} connected to: {}", player.getUsername(), serverName);
+
+        // Если уже прошел капчу - пропускаем
+        if (passed.contains(uuid)) {
+            return;
+        }
+
+        // Если это НЕ limbo/auth сервер (значит авторизация пройдена) - показываем капчу
+        if (!serverName.toLowerCase().contains("limbo") && !serverName.toLowerCase().contains("auth")) {
+            if (!pending.contains(uuid)) {
+                plugin.getLogger().info("[CAPTCHA] {} passed auth, sending captcha for server: {}", player.getUsername(), serverName);
+                sendCaptcha(player);
+            }
+        }
     }
 
     @Subscribe(order = PostOrder.FIRST)
     public void onServerPreConnect(ServerPreConnectEvent event) {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
+        String serverName = event.getOriginalServer().getServerInfo().getName();
 
-        // Если прошел капчу - пропускаем везде
-        if (passed.contains(uuid)) {
+        // Пропускаем limbo/auth сервера
+        if (serverName.toLowerCase().contains("limbo") || serverName.toLowerCase().contains("auth")) {
             return;
         }
 
-        String serverName = event.getOriginalServer().getServerInfo().getName().toLowerCase();
-        
-        // Разрешаем только limbo/auth сервера
-        if (!serverName.contains("limbo") && !serverName.contains("auth")) {
+        // Если не прошел капчу - блокируем подключение к игровым серверам
+        if (!passed.contains(uuid)) {
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
+            plugin.getLogger().info("[CAPTCHA] {} BLOCKED from: {}", player.getUsername(), serverName);
+            
+            if (!pending.contains(uuid)) {
+                sendCaptcha(player);
+            }
         }
     }
 
-    @Subscribe(order = PostOrder.FIRST)
+    @Subscribe
     public void onChat(PlayerChatEvent event) {
         if (!passed.contains(event.getPlayer().getUniqueId())) {
             event.setResult(PlayerChatEvent.ChatResult.denied());
+            event.getPlayer().sendMessage(Component.text("Пройдите капчу!", NamedTextColor.RED));
         }
     }
 
     @Subscribe
     public void onDisconnect(DisconnectEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
-        // НЕ сбрасываем passed - игрок остается верифицированным
         pending.remove(uuid);
     }
 
@@ -88,7 +110,7 @@ public class PlayerListener {
         String token = plugin.getCaptchaManager().createToken(uuid, player.getUsername(), ip);
         String url = plugin.getConfigManager().getCaptchaUrl(token);
 
-        plugin.getLogger().info("[CAPTCHA] SEND | Player: {} | Token: {}", player.getUsername(), token);
+        plugin.getLogger().info("[CAPTCHA] SEND to {} | Token: {}", player.getUsername(), token);
 
         player.sendMessage(Component.text(""));
         player.sendMessage(Component.text("§6§lFakeWorld §7▸ §fПроверка безопасности", NamedTextColor.GOLD));
@@ -96,46 +118,20 @@ public class PlayerListener {
         player.sendMessage(Component.text("§eПройдите проверку по ссылке:", NamedTextColor.YELLOW));
         player.sendMessage(Component.text("§b§n" + url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
         player.sendMessage(Component.text(""));
-        player.sendMessage(Component.text("§7Ссылка действительна " + plugin.getConfigManager().getCaptchaTimeout() + " минут", NamedTextColor.GRAY));
 
-        // НЕ ИСПОЛЬЗУЕМ orTimeout - он кикает!
-        // Используем свой таймер
+        // Просто запускаем проверку без таймаута
         plugin.getCaptchaManager().requestVerification(uuid)
             .thenAccept(success -> {
                 pending.remove(uuid);
                 if (success) {
                     passed.add(uuid);
-                    plugin.getLogger().info("[CAPTCHA] PASSED | Player: {} | Token: {}", player.getUsername(), token);
+                    plugin.getLogger().info("[CAPTCHA] {} PASSED!", player.getUsername());
 
                     player.sendMessage(Component.text(""));
                     player.sendMessage(Component.text("§a§l✅ Проверка пройдена!", NamedTextColor.GREEN));
-                    player.sendMessage(Component.text("§7Добро пожаловать на сервер!", NamedTextColor.GREEN));
-                    player.sendMessage(Component.text(""));
-
-                    // Подключаем к limbo/auth серверу
-                    connectToLimbo(player);
-                } else {
-                    plugin.getLogger().info("[CAPTCHA] FAILED | Player: {} | Token: {}", player.getUsername(), token);
-                    player.sendMessage(Component.text(""));
-                    player.sendMessage(Component.text("§cПроверка не пройдена.", NamedTextColor.RED));
-                    player.sendMessage(Component.text("§7Перезайдите для получения новой ссылки.", NamedTextColor.GRAY));
+                    player.sendMessage(Component.text("§7Добро пожаловать! Используйте §e/server §7для игры.", NamedTextColor.GREEN));
                     player.sendMessage(Component.text(""));
                 }
             });
-    }
-
-    private void connectToLimbo(Player player) {
-        // Ищем limbo сервер
-        for (RegisteredServer server : plugin.getServer().getAllServers()) {
-            String name = server.getServerInfo().getName().toLowerCase();
-            if (name.contains("limbo") || name.contains("auth")) {
-                player.createConnectionRequest(server).connectWithIndication();
-                plugin.getLogger().info("[CAPTCHA] {} connecting to: {}", player.getUsername(), server.getServerInfo().getName());
-                return;
-            }
-        }
-        // Если не нашли - к первому доступному
-        Optional<RegisteredServer> first = plugin.getServer().getAllServers().stream().findFirst();
-        first.ifPresent(s -> player.createConnectionRequest(s).connectWithIndication());
     }
 }
