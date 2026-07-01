@@ -1,3 +1,6 @@
+# LimboCaptcha - Captcha BEFORE LimboAuth
+# Author: KondrMS
+
 recaptcha:
   site-key: "YOUR_SITE_KEY"
   secret-key: "YOUR_SECRET_KEY"
@@ -8,11 +11,8 @@ webserver:
   port: 8080
   api-port: 8081
 
-settings:
-  target-server: "lobby"
-
 messages:
   captcha-message: "&eПройдите проверку:"
-  success-message: "&aДобро пожаловать!"
+  success-message: "&aПроверка пройдена! Перемещаем на авторизацию..."
   kick-message: "&cВремя истекло!"
-  fail-kick-message: "&cПодозрительная активность! Бан 5 мин."
+  fail-kick-message: "&cПроверка не пройдена!"
