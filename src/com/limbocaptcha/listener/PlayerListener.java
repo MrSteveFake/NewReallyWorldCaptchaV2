@@ -38,6 +38,7 @@ public class PlayerListener {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
+        // Проверка бана
         Long banExpire = banned.get(uuid);
         if (banExpire != null) {
             if (System.currentTimeMillis() < banExpire) {
@@ -66,7 +67,6 @@ public class PlayerListener {
         UUID uuid = event.getPlayer().getUniqueId();
         passed.remove(uuid);
         pending.remove(uuid);
-        plugin.getCaptchaManager().cancelVerification(uuid);
     }
 
     @Subscribe(order = PostOrder.FIRST)
@@ -74,7 +74,6 @@ public class PlayerListener {
         UUID uuid = event.getPlayer().getUniqueId();
         if (!passed.contains(uuid)) {
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
-            if (!pending.contains(uuid)) sendCaptcha(event.getPlayer());
         }
     }
 
@@ -82,19 +81,6 @@ public class PlayerListener {
     public void onChat(PlayerChatEvent event) {
         if (!passed.contains(event.getPlayer().getUniqueId())) {
             event.setResult(PlayerChatEvent.ChatResult.denied());
-            event.getPlayer().sendMessage(Component.text("Пройдите проверку!", NamedTextColor.RED));
-        }
-    }
-
-    @Subscribe
-    public void onServerConnected(ServerConnectedEvent event) {
-        Player player = event.getPlayer();
-        if (!passed.contains(player.getUniqueId())) {
-            plugin.getServer().getScheduler()
-                .buildTask(plugin, () -> player.disconnect(
-                    Component.text(plugin.getConfigManager().getKickMessage().replace("&", "§"))))
-                .delay(100, TimeUnit.MILLISECONDS)
-                .schedule();
         }
     }
 
@@ -108,10 +94,10 @@ public class PlayerListener {
         String url = plugin.getConfigManager().getCaptchaUrl(token);
         String msg = plugin.getConfigManager().getCaptchaMessage().replace("&", "§");
 
-        plugin.getLogger().info("[CAPTCHA] {} Token: {}", player.getUsername(), token);
+        plugin.getLogger().info("[CAPTCHA] {} | Token: {}", player.getUsername(), token);
 
         player.sendMessage(Component.text(""));
-        player.sendMessage(Component.text("§6§lFakeWorld §7▸ §fПроверка", NamedTextColor.GOLD));
+        player.sendMessage(Component.text("§6§lFakeWorld §7▸ §fПроверка безопасности", NamedTextColor.GOLD));
         player.sendMessage(Component.text(""));
         player.sendMessage(Component.text(msg, NamedTextColor.YELLOW));
         player.sendMessage(Component.text(""));
@@ -119,29 +105,49 @@ public class PlayerListener {
         player.sendMessage(Component.text(""));
         player.sendMessage(Component.text("§7Ссылка действительна " + plugin.getConfigManager().getCaptchaTimeout() + " мин.", NamedTextColor.GRAY));
         player.sendMessage(Component.text("§c⚠ При провале — бан 5 минут!", NamedTextColor.RED));
+        player.sendMessage(Component.text("§7После прохождения введите: §e/captcha ok", NamedTextColor.GRAY));
 
-        // Ждем прохождения капчи
-        plugin.getCaptchaManager().requestVerification(uuid)
-            .orTimeout(plugin.getConfigManager().getCaptchaTimeout(), TimeUnit.MINUTES)
-            .thenAccept(success -> {
-                pending.remove(uuid);
-                if (success) {
-                    passed.add(uuid);
-                    player.sendMessage(Component.text(plugin.getConfigManager().getSuccessMessage().replace("&", "§"), NamedTextColor.GREEN));
-                    plugin.getLogger().info("[CAPTCHA] {} PASSED!", player.getUsername());
-                    
-                    Optional<RegisteredServer> target = plugin.getServer().getServer(plugin.getConfigManager().getTargetServer());
-                    target.ifPresent(rs -> player.createConnectionRequest(rs).connect());
-                } else {
+        // Ждем таймаут
+        plugin.getServer().getScheduler()
+            .buildTask(plugin, () -> {
+                if (pending.contains(uuid) && player.isActive()) {
+                    pending.remove(uuid);
                     banned.put(uuid, System.currentTimeMillis() + BAN_TIME);
-                    plugin.getLogger().warn("[CAPTCHA] {} FAILED! BANNED!", player.getUsername());
-                    player.disconnect(Component.text("§c§lПодозрительная активность!\n§7Бан на 5 минут."));
+                    plugin.getLogger().warn("[CAPTCHA] {} TIMEOUT - BANNED!", player.getUsername());
+                    player.disconnect(Component.text(
+                        "§c§lВремя истекло!\n\n" +
+                        "§7Вы заблокированы на §f5 минут§7.\n" +
+                        "§7Причина: §fПодозрительная активность"
+                    ));
                 }
             })
-            .exceptionally(t -> {
-                pending.remove(uuid);
-                player.disconnect(Component.text("§cВремя истекло!"));
-                return null;
-            });
+            .delay(plugin.getConfigManager().getCaptchaTimeout(), TimeUnit.MINUTES)
+            .schedule();
+    }
+
+    public void completeCaptcha(Player player, boolean success) {
+        UUID uuid = player.getUniqueId();
+        if (!pending.contains(uuid)) return;
+        pending.remove(uuid);
+
+        if (success) {
+            passed.add(uuid);
+            player.sendMessage(Component.text(plugin.getConfigManager().getSuccessMessage().replace("&", "§"), NamedTextColor.GREEN));
+            plugin.getLogger().info("[CAPTCHA] {} PASSED!", player.getUsername());
+            
+            Optional<RegisteredServer> target = plugin.getServer().getServer(plugin.getConfigManager().getTargetServer());
+            target.ifPresent(rs -> player.createConnectionRequest(rs).connect());
+        } else {
+            banned.put(uuid, System.currentTimeMillis() + BAN_TIME);
+            plugin.getLogger().warn("[CAPTCHA] {} FAILED - BANNED!", player.getUsername());
+            player.disconnect(Component.text(
+                "§c§lПодозрительная активность!\n\n" +
+                "§7Вы заблокированы на §f5 минут§7."
+            ));
+        }
+    }
+
+    public boolean isPending(UUID uuid) {
+        return pending.contains(uuid);
     }
 }
