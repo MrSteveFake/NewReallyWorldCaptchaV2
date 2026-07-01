@@ -35,9 +35,8 @@ public class PlayerListener {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        // Всегда отправляем капчу при входе
+        passed.remove(uuid);
         pending.add(uuid);
-        passed.remove(uuid); // Сбрасываем предыдущий статус
 
         plugin.getServer().getScheduler()
             .buildTask(plugin, () -> sendCaptcha(player))
@@ -66,7 +65,7 @@ public class PlayerListener {
     public void onChat(PlayerChatEvent event) {
         if (!passed.contains(event.getPlayer().getUniqueId())) {
             event.setResult(PlayerChatEvent.ChatResult.denied());
-            event.getPlayer().sendMessage(Component.text("Pass captcha first!", NamedTextColor.RED));
+            event.getPlayer().sendMessage(Component.text("Пройдите проверку перед использованием чата!", NamedTextColor.RED));
         }
     }
 
@@ -92,13 +91,16 @@ public class PlayerListener {
         String url = plugin.getConfigManager().getCaptchaUrl(token);
         String msg = plugin.getConfigManager().getCaptchaMessage().replace("&", "§");
 
-        plugin.getLogger().info("[CAPTCHA] Player {} [{}] - Token: {} - IP: {}", 
-            player.getUsername(), uuid, token, ip);
+        plugin.getLogger().info("[CAPTCHA] {} [{}] - Token: {} - IP: {}", player.getUsername(), uuid, token, ip);
 
-        player.sendMessage(Component.text("", NamedTextColor.GOLD));
+        player.sendMessage(Component.text(""));
+        player.sendMessage(Component.text("§6§lFakeWorld §7▸ §fПроверка безопасности", NamedTextColor.GOLD));
+        player.sendMessage(Component.text(""));
         player.sendMessage(Component.text(msg, NamedTextColor.YELLOW));
-        player.sendMessage(Component.text(url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
-        player.sendMessage(Component.text("", NamedTextColor.GOLD));
+        player.sendMessage(Component.text(""));
+        player.sendMessage(Component.text("§b§n" + url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
+        player.sendMessage(Component.text(""));
+        player.sendMessage(Component.text("§7Ссылка действительна " + plugin.getConfigManager().getCaptchaTimeout() + " минут.", NamedTextColor.GRAY));
 
         plugin.getCaptchaManager().requestVerification(uuid)
             .orTimeout(plugin.getConfigManager().getCaptchaTimeout(), TimeUnit.MINUTES)
@@ -107,36 +109,32 @@ public class PlayerListener {
                 if (success) {
                     passed.add(uuid);
                     String ok = plugin.getConfigManager().getSuccessMessage().replace("&", "§");
+                    player.sendMessage(Component.text(""));
                     player.sendMessage(Component.text(ok, NamedTextColor.GREEN));
-                    plugin.getLogger().info("[CAPTCHA] Player {} PASSED verification!", player.getUsername());
+                    player.sendMessage(Component.text("§7Добро пожаловать на §6§lFakeWorld§7!", NamedTextColor.GREEN));
+                    plugin.getLogger().info("[CAPTCHA] {} PASSED verification!", player.getUsername());
 
                     Optional<RegisteredServer> target = plugin.getServer()
                         .getServer(plugin.getConfigManager().getTargetServer());
                     if (target.isPresent()) {
                         player.createConnectionRequest(target.get()).connect();
+                        player.sendMessage(Component.text("§7Подключаем к серверу...", NamedTextColor.GRAY));
                     } else {
-                        player.sendMessage(Component.text("Use /server to connect", NamedTextColor.GREEN));
+                        player.sendMessage(Component.text("§7Используйте §e/server §7для подключения", NamedTextColor.GRAY));
                     }
                 } else {
-                    plugin.getLogger().info("[CAPTCHA] Player {} FAILED verification!", player.getUsername());
-                    // Не кикаем при провале, даем шанс заново
-                    player.sendMessage(Component.text("", NamedTextColor.RED));
-                    player.sendMessage(Component.text("Captcha failed! You can try again by reconnecting.", NamedTextColor.RED));
-                    player.sendMessage(Component.text("", NamedTextColor.RED));
+                    plugin.getLogger().info("[CAPTCHA] {} FAILED verification!", player.getUsername());
+                    player.sendMessage(Component.text(""));
+                    player.sendMessage(Component.text("§c§lПроверка не пройдена!", NamedTextColor.RED));
+                    player.sendMessage(Component.text("§7Перезайдите в игру чтобы попробовать снова.", NamedTextColor.GRAY));
                     passed.remove(uuid);
                 }
             })
             .exceptionally(t -> {
                 pending.remove(uuid);
-                plugin.getLogger().info("[CAPTCHA] Player {} verification TIMEOUT!", player.getUsername());
-                kick(player, plugin.getConfigManager().getKickMessage().replace("&", "§"));
+                plugin.getLogger().info("[CAPTCHA] {} TIMEOUT!", player.getUsername());
+                player.disconnect(Component.text(plugin.getConfigManager().getKickMessage().replace("&", "§")));
                 return null;
             });
-    }
-
-    private void kick(Player player, String message) {
-        player.disconnect(Component.text(message));
-        passed.remove(player.getUniqueId());
-        pending.remove(player.getUniqueId());
     }
 }
