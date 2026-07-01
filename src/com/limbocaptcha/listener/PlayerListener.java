@@ -23,10 +23,9 @@ import java.util.concurrent.TimeUnit;
 public class PlayerListener {
 
     private final LimboCaptcha plugin;
-    private final Set<UUID> passed = ConcurrentHashMap.newKeySet();
-    private final Set<UUID> pending = ConcurrentHashMap.newKeySet();
+    private final Set<UUID> passed = new ConcurrentHashMap<UUID, Boolean>().newKeySet();
+    private final Set<UUID> pending = new ConcurrentHashMap<UUID, Boolean>().newKeySet();
     private final Map<UUID, ScheduledTask> keepAliveTasks = new ConcurrentHashMap<>();
-    private final Map<UUID, Long> lastCaptchaTime = new ConcurrentHashMap<>();
 
     public PlayerListener(LimboCaptcha plugin) {
         this.plugin = plugin;
@@ -36,15 +35,6 @@ public class PlayerListener {
     public void onLogin(LoginEvent event) {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
-
-        // Если уже проходил капчу недавно - пропускаем
-        Long lastTime = lastCaptchaTime.get(uuid);
-        if (lastTime != null && (System.currentTimeMillis() - lastTime) < TimeUnit.HOURS.toMillis(1)) {
-            passed.add(uuid);
-            plugin.getLogger().info("[CAPTCHA] {} already verified", player.getUsername());
-            return;
-        }
-
         plugin.getLogger().info("[CAPTCHA] {} connected", player.getUsername());
     }
 
@@ -84,11 +74,6 @@ public class PlayerListener {
         UUID uuid = event.getPlayer().getUniqueId();
         pending.remove(uuid);
         stopKeepAlive(uuid);
-        // Сохраняем время прохождения капчи
-        if (passed.contains(uuid)) {
-            lastCaptchaTime.put(uuid, System.currentTimeMillis());
-        }
-        passed.remove(uuid);
     }
 
     private void sendCaptcha(Player player) {
@@ -110,21 +95,42 @@ public class PlayerListener {
         player.sendMessage(Component.text("§eПройдите проверку по ссылке:", NamedTextColor.YELLOW));
         player.sendMessage(Component.text("§b§n" + url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
         player.sendMessage(Component.text(""));
+        player.sendMessage(Component.text("§7После прохождения подождите 3 секунды...", NamedTextColor.GRAY));
 
-        plugin.getCaptchaManager().requestVerification(uuid)
-            .thenAccept(success -> {
-                pending.remove(uuid);
-                stopKeepAlive(uuid);
-                
-                if (success) {
-                    passed.add(uuid);
-                    lastCaptchaTime.put(uuid, System.currentTimeMillis());
-                    plugin.getLogger().info("[CAPTCHA] {} PASSED!", player.getUsername());
-                    
-                    player.sendMessage(Component.text("§a§l✅ Проверка пройдена!", NamedTextColor.GREEN));
-                    player.sendMessage(Component.text("§7Используйте /server для игры", NamedTextColor.GREEN));
+        // Запускаем опрос БД каждые 2 секунды
+        startPolling(player, token);
+    }
+
+    private void startPolling(Player player, String token) {
+        UUID uuid = player.getUniqueId();
+        
+        ScheduledTask pollTask = plugin.getServer().getScheduler()
+            .buildTask(plugin, () -> {
+                if (!player.isActive() || !pending.contains(uuid)) {
+                    return;
                 }
-            });
+
+                // Проверяем статус в БД
+                String status = plugin.getDatabaseManager().getTokenStatus(token);
+                
+                if ("success".equals(status)) {
+                    pending.remove(uuid);
+                    stopKeepAlive(uuid);
+                    passed.add(uuid);
+                    
+                    plugin.getLogger().info("[CAPTCHA] {} PASSED! (polling)", player.getUsername());
+                    
+                    player.sendMessage(Component.text(""));
+                    player.sendMessage(Component.text("§a§l✅ Проверка пройдена!", NamedTextColor.GREEN));
+                    player.sendMessage(Component.text("§7Добро пожаловать! Используйте §e/server §7для игры.", NamedTextColor.GREEN));
+                    player.sendMessage(Component.text(""));
+                    
+                    // Отменяем этот опрос
+                    throw new RuntimeException("STOP_POLLING");
+                }
+            })
+            .repeat(2, TimeUnit.SECONDS)
+            .schedule();
     }
 
     private void startKeepAlive(Player player) {
