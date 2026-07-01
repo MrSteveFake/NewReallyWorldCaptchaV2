@@ -9,7 +9,7 @@ import java.util.Properties;
 public class ConfigManager {
 
     private final Path configFile;
-    private String siteKey, secretKey, captchaMessage, successMessage, kickMessage, failKickMessage, captchaUrlFormat, targetServer;
+    private String siteKey, secretKey, captchaMessage, successMessage, kickMessage, failKickMessage, captchaUrlFormat;
     private int webPort, apiPort, captchaTimeout;
 
     public ConfigManager(Path dataDirectory) {
@@ -42,34 +42,21 @@ public class ConfigManager {
             kickMessage = p.getProperty("messages.kick-message", "&cTimeout!");
             failKickMessage = p.getProperty("messages.fail-kick-message", "&cFailed!");
             captchaUrlFormat = p.getProperty("recaptcha.url-format", "https://site.com/captcha.html?token=${token}");
-            targetServer = p.getProperty("settings.target-server", "lobby");
         } catch (IOException e) { setDefaults(); }
     }
 
     private void createDefaultConfig() throws IOException {
         Files.writeString(configFile,
-            "recaptcha:\n" +
-            "  site-key: \"KEY\"\n" +
-            "  secret-key: \"SECRET\"\n" +
-            "  url-format: \"https://site.com/captcha.html?token=${token}\"\n" +
-            "  timeout-minutes: 5\n" +
-            "webserver:\n" +
-            "  port: 8080\n" +
-            "  api-port: 8081\n" +
-            "settings:\n" +
-            "  target-server: \"lobby\"\n" +
-            "messages:\n" +
-            "  captcha-message: \"&ePass captcha:\"\n" +
-            "  success-message: \"&aOK!\"\n" +
-            "  kick-message: \"&cTimeout!\"\n" +
-            "  fail-kick-message: \"&cFailed!\"\n"
+            "recaptcha:\n  site-key: \"KEY\"\n  secret-key: \"SECRET\"\n  url-format: \"https://site.com/captcha.html?token=${token}\"\n  timeout-minutes: 5\n" +
+            "webserver:\n  port: 8080\n  api-port: 8081\n" +
+            "messages:\n  captcha-message: \"&ePass captcha:\"\n  success-message: \"&aOK!\"\n  kick-message: \"&cTimeout!\"\n  fail-kick-message: \"&cFailed!\"\n"
         );
     }
 
     private void setDefaults() {
         siteKey = ""; secretKey = ""; webPort = 8080; apiPort = 8081; captchaTimeout = 5;
         captchaMessage = "&ePass:"; successMessage = "&aOK!"; kickMessage = "&cTimeout!"; failKickMessage = "&cFailed!";
-        captchaUrlFormat = "https://site.com/captcha.html?token=${token}"; targetServer = "lobby";
+        captchaUrlFormat = "https://site.com/captcha.html?token=${token}";
     }
 
     public String getSiteKey() { return siteKey; }
@@ -81,6 +68,5 @@ public class ConfigManager {
     public String getSuccessMessage() { return successMessage; }
     public String getKickMessage() { return kickMessage; }
     public String getFailKickMessage() { return failKickMessage; }
-    public String getTargetServer() { return targetServer; }
     public String getCaptchaUrl(String token) { return captchaUrlFormat.replace("${token}", token); }
 }
