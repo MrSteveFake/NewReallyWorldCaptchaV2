@@ -12,14 +12,12 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 public class CaptchaManager {
 
     private final ConfigManager cm;
     private final DatabaseManager dm;
     private final Map<UUID, CompletableFuture<Boolean>> pending = new ConcurrentHashMap<>();
-    private final Map<UUID, String> tokens = new ConcurrentHashMap<>();
     private static final SecureRandom R = new SecureRandom();
     private static final String CH = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -47,61 +45,15 @@ public class CaptchaManager {
     }
 
     public CompletableFuture<Boolean> requestVerification(UUID u) {
-        CompletableFuture<Boolean> old = pending.remove(u);
-        if (old != null && !old.isDone()) old.complete(false);
-
         CompletableFuture<Boolean> f = new CompletableFuture<>();
         pending.put(u, f);
-        f.orTimeout(cm.getCaptchaTimeout(), TimeUnit.MINUTES)
-            .exceptionally(t -> {
-                pending.remove(u);
-                tokens.remove(u);
-                return false;
-            });
-
-        // Запускаем поток опроса MySQL
-        String token = tokens.get(u);
-        if (token != null) {
-            startPolling(u, token, f);
-        }
-
+        // НЕ ДОБАВЛЯЕМ orTimeout!
         return f;
-    }
-
-    private void startPolling(UUID u, String token, CompletableFuture<Boolean> f) {
-        Thread poller = new Thread(() -> {
-            long timeout = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(cm.getCaptchaTimeout());
-
-            while (System.currentTimeMillis() < timeout && !f.isDone()) {
-                String status = dm.pollStatus(token);
-
-                if ("success".equals(status)) {
-                    f.complete(true);
-                    return;
-                } else if ("failed".equals(status)) {
-                    f.complete(false);
-                    return;
-                }
-
-                try {
-                    Thread.sleep(2000); // Опрос каждые 2 секунды
-                } catch (InterruptedException e) {
-                    break;
-                }
-            }
-
-            if (!f.isDone()) {
-                f.complete(false);
-            }
-        });
-        poller.setDaemon(true);
-        poller.start();
     }
 
     public void cancelVerification(UUID u) {
         CompletableFuture<Boolean> f = pending.remove(u);
         if (f != null && !f.isDone()) f.complete(false);
-        tokens.remove(u);
     }
 
     public boolean verifyCaptcha(String token, String recaptcha) {
@@ -123,26 +75,62 @@ public class CaptchaManager {
             }
             if (conn.getResponseCode() == 200) {
                 String body = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-                return body.contains("\"success\": true") || body.contains("\"success\":true");
+                boolean success = body.contains("\"success\": true") || body.contains("\"success\":true");
+                System.out.println("[LimboCaptcha] Google reCAPTCHA response: " + body);
+                System.out.println("[LimboCaptcha] Verification result: " + success);
+                return success;
             }
         } catch (Exception e) {
+            System.err.println("[LimboCaptcha] verifyCaptcha error: " + e.getMessage());
             e.printStackTrace();
         }
         return false;
     }
 
-    // Метод для вызова из PHP сайта (через общую БД)
-    // Не нужен отдельный API сервер!
-    
-    public void markSuccess(String token) { dm.markSuccess(token); }
-    public void markFailed(String token) { dm.markFailed(token); }
-    public String getPlayerNameByToken(String t) { return dm.getPlayerNameByToken(t); }
+    public void markSuccess(String token) {
+        dm.markSuccess(token);
+        System.out.println("[LimboCaptcha] markSuccess: " + token);
+        String uid = dm.getPlayerUUIDByToken(token);
+        if (uid != null) {
+            try {
+                UUID u = UUID.fromString(uid);
+                CompletableFuture<Boolean> f = pending.get(u);
+                if (f != null && !f.isDone()) {
+                    f.complete(true);
+                    System.out.println("[LimboCaptcha] Future completed SUCCESS for: " + u);
+                } else {
+                    System.out.println("[LimboCaptcha] No pending future for: " + u);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
+    public void markFailed(String token) {
+        dm.markFailed(token);
+        System.out.println("[LimboCaptcha] markFailed: " + token);
+        String uid = dm.getPlayerUUIDByToken(token);
+        if (uid != null) {
+            try {
+                UUID u = UUID.fromString(uid);
+                CompletableFuture<Boolean> f = pending.get(u);
+                if (f != null && !f.isDone()) {
+                    f.complete(false);
+                    System.out.println("[LimboCaptcha] Future completed FAILED for: " + u);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public String getPlayerNameByToken(String t) { return dm.getPlayerNameByToken(t); }
     public void shutdown() {
         pending.values().forEach(f -> { if (!f.isDone()) f.complete(false); });
         pending.clear();
-        tokens.clear();
     }
 
     public ConfigManager getConfigManager() { return cm; }
+    private final Map<UUID, String> tokens = new ConcurrentHashMap<>();
 }
