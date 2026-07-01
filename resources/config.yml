@@ -1,6 +1,3 @@
-# LimboCaptcha - Captcha BEFORE LimboAuth
-# Author: KondrMS
-
 recaptcha:
   site-key: "YOUR_SITE_KEY"
   secret-key: "YOUR_SECRET_KEY"
@@ -13,6 +10,4 @@ webserver:
 
 messages:
   captcha-message: "&eПройдите проверку:"
-  success-message: "&aПроверка пройдена! Перемещаем на авторизацию..."
-  kick-message: "&cВремя истекло!"
-  fail-kick-message: "&cПроверка не пройдена!"
+  success-message: "&aПроверка пройдена!"
