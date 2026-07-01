@@ -4,29 +4,21 @@
 # ===========================================
 
 recaptcha:
-  # Google reCAPTCHA v2 keys
-  site-key: "6LeXhTotAAAAAJeekHvPM3KuxMKOmuuzP4Phwn3N"
+  site-key: "YOUR_SITE_KEY"
   secret-key: "YOUR_SECRET_KEY"
-  
-  # URL format (token will be replaced)
   url-format: "https://captcha.fakeworld.pw/captcha.html?token=${token}"
-  
-  # Timeout in minutes
   timeout-minutes: 5
 
 webserver:
-  # Web server port (for captcha page)
   port: 8080
-  
-  # API server port (for website integration)
   api-port: 8081
 
 settings:
-  # Server to connect after passing captcha
   target-server: "lobby"
+  ban-time-minutes: 5
 
 messages:
   captcha-message: "&eПожалуйста, пройдите проверку по ссылке ниже:"
   success-message: "&aПроверка пройдена! Добро пожаловать на FakeWorld!"
   kick-message: "&cВремя проверки истекло!\n&7Перезайдите чтобы получить новую ссылку."
-  fail-kick-message: "&cПроверка не пройдена!\n&7Перезайдите чтобы попробовать снова."
+  fail-kick-message: "&cПодозрительная активность!\n&7Вы заблокированы на 5 минут."
