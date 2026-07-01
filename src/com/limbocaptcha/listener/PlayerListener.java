@@ -35,14 +35,15 @@ public class PlayerListener {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        plugin.getLogger().info("[CAPTCHA] {} connected", player.getUsername());
+        plugin.getLogger().info("[CAPTCHA] {} connected - sending captcha", player.getUsername());
 
+        // Всегда отправляем капчу при входе
         passed.remove(uuid);
         pending.add(uuid);
 
         plugin.getServer().getScheduler()
             .buildTask(plugin, () -> sendCaptcha(player))
-            .delay(500, TimeUnit.MILLISECONDS)
+            .delay(1, TimeUnit.SECONDS)
             .schedule();
     }
 
@@ -51,18 +52,16 @@ public class PlayerListener {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        // Если капча пройдена - разрешаем ВСЕ подключения
+        // Если прошел капчу - пропускаем везде
         if (passed.contains(uuid)) {
             return;
         }
 
-        // Проверяем, может это сервер LimboAuth?
-        String serverName = event.getOriginalServer().getServerInfo().getName();
+        String serverName = event.getOriginalServer().getServerInfo().getName().toLowerCase();
         
-        // Если капча не пройдена и это НЕ LimboAuth сервер - блокируем
-        if (!serverName.toLowerCase().contains("limbo") && !serverName.toLowerCase().contains("auth")) {
+        // Разрешаем только limbo/auth сервера
+        if (!serverName.contains("limbo") && !serverName.contains("auth")) {
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
-            plugin.getLogger().info("[CAPTCHA] {} blocked from: {}", player.getUsername(), serverName);
         }
     }
 
@@ -70,34 +69,14 @@ public class PlayerListener {
     public void onChat(PlayerChatEvent event) {
         if (!passed.contains(event.getPlayer().getUniqueId())) {
             event.setResult(PlayerChatEvent.ChatResult.denied());
-            event.getPlayer().sendMessage(Component.text(
-                "§cПройдите капчу перед использованием чата!",
-                NamedTextColor.RED
-            ));
-        }
-    }
-
-    @Subscribe(order = PostOrder.LAST)
-    public void onServerConnected(ServerConnectedEvent event) {
-        Player player = event.getPlayer();
-        UUID uuid = player.getUniqueId();
-        String serverName = event.getServer().getServerInfo().getName();
-
-        // Если игрок не прошел капчу и подключился НЕ к LimboAuth - кикаем
-        if (!passed.contains(uuid) && !serverName.toLowerCase().contains("limbo") && !serverName.toLowerCase().contains("auth")) {
-            plugin.getLogger().warn("[CAPTCHA] {} connected to {} without captcha!", player.getUsername(), serverName);
-            plugin.getServer().getScheduler()
-                .buildTask(plugin, () -> player.disconnect(Component.text("§cПройдите капчу!")))
-                .delay(50, TimeUnit.MILLISECONDS)
-                .schedule();
         }
     }
 
     @Subscribe
     public void onDisconnect(DisconnectEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
+        // НЕ сбрасываем passed - игрок остается верифицированным
         pending.remove(uuid);
-        plugin.getCaptchaManager().cancelVerification(uuid);
     }
 
     private void sendCaptcha(Player player) {
@@ -109,65 +88,54 @@ public class PlayerListener {
         String token = plugin.getCaptchaManager().createToken(uuid, player.getUsername(), ip);
         String url = plugin.getConfigManager().getCaptchaUrl(token);
 
-        plugin.getLogger().info("[CAPTCHA] {} | Token: {}", player.getUsername(), token);
+        plugin.getLogger().info("[CAPTCHA] SEND | Player: {} | Token: {}", player.getUsername(), token);
 
         player.sendMessage(Component.text(""));
         player.sendMessage(Component.text("§6§lFakeWorld §7▸ §fПроверка безопасности", NamedTextColor.GOLD));
         player.sendMessage(Component.text(""));
         player.sendMessage(Component.text("§eПройдите проверку по ссылке:", NamedTextColor.YELLOW));
-        player.sendMessage(Component.text(""));
         player.sendMessage(Component.text("§b§n" + url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
         player.sendMessage(Component.text(""));
-        player.sendMessage(Component.text("§7Ссылка действительна " + plugin.getConfigManager().getCaptchaTimeout() + " мин.", NamedTextColor.GRAY));
-        player.sendMessage(Component.text("§7После прохождения вы попадете на авторизацию.", NamedTextColor.GRAY));
+        player.sendMessage(Component.text("§7Ссылка действительна " + plugin.getConfigManager().getCaptchaTimeout() + " минут", NamedTextColor.GRAY));
 
+        // НЕ ИСПОЛЬЗУЕМ orTimeout - он кикает!
+        // Используем свой таймер
         plugin.getCaptchaManager().requestVerification(uuid)
-            .orTimeout(plugin.getConfigManager().getCaptchaTimeout(), TimeUnit.MINUTES)
             .thenAccept(success -> {
                 pending.remove(uuid);
                 if (success) {
                     passed.add(uuid);
-                    
+                    plugin.getLogger().info("[CAPTCHA] PASSED | Player: {} | Token: {}", player.getUsername(), token);
+
                     player.sendMessage(Component.text(""));
                     player.sendMessage(Component.text("§a§l✅ Проверка пройдена!", NamedTextColor.GREEN));
-                    player.sendMessage(Component.text("§7Перемещаем на авторизацию...", NamedTextColor.GREEN));
-                    
-                    plugin.getLogger().info("[CAPTCHA] {} PASSED! Moving to LimboAuth...", player.getUsername());
-
-                    // Пробуем найти LimboAuth сервер и подключить
-                    Optional<RegisteredServer> limboServer = findLimboServer();
-                    if (limboServer.isPresent()) {
-                        player.createConnectionRequest(limboServer.get()).connectWithIndication();
-                        plugin.getLogger().info("[CAPTCHA] {} connected to LimboAuth: {}", 
-                            player.getUsername(), limboServer.get().getServerInfo().getName());
-                    } else {
-                        plugin.getLogger().warn("[CAPTCHA] LimboAuth server not found!");
-                        player.sendMessage(Component.text("§7Используйте §e/server §7для подключения.", NamedTextColor.GREEN));
-                    }
-                } else {
-                    plugin.getLogger().info("[CAPTCHA] {} FAILED/TIMEOUT", player.getUsername());
+                    player.sendMessage(Component.text("§7Добро пожаловать на сервер!", NamedTextColor.GREEN));
                     player.sendMessage(Component.text(""));
-                    player.sendMessage(Component.text("§cСсылка устарела или проверка не пройдена.", NamedTextColor.RED));
-                    player.sendMessage(Component.text("§7Перезайдите в игру для получения новой ссылки.", NamedTextColor.GRAY));
+
+                    // Подключаем к limbo/auth серверу
+                    connectToLimbo(player);
+                } else {
+                    plugin.getLogger().info("[CAPTCHA] FAILED | Player: {} | Token: {}", player.getUsername(), token);
+                    player.sendMessage(Component.text(""));
+                    player.sendMessage(Component.text("§cПроверка не пройдена.", NamedTextColor.RED));
+                    player.sendMessage(Component.text("§7Перезайдите для получения новой ссылки.", NamedTextColor.GRAY));
+                    player.sendMessage(Component.text(""));
                 }
-            })
-            .exceptionally(t -> {
-                pending.remove(uuid);
-                plugin.getLogger().error("[CAPTCHA] {} error: {}", player.getUsername(), t.getMessage());
-                return null;
             });
     }
 
-    // Поиск сервера LimboAuth
-    private Optional<RegisteredServer> findLimboServer() {
-        // Ищем сервер с "limbo" или "auth" в названии
+    private void connectToLimbo(Player player) {
+        // Ищем limbo сервер
         for (RegisteredServer server : plugin.getServer().getAllServers()) {
             String name = server.getServerInfo().getName().toLowerCase();
             if (name.contains("limbo") || name.contains("auth")) {
-                return Optional.of(server);
+                player.createConnectionRequest(server).connectWithIndication();
+                plugin.getLogger().info("[CAPTCHA] {} connecting to: {}", player.getUsername(), server.getServerInfo().getName());
+                return;
             }
         }
-        // Если не нашли - берем первый доступный
-        return plugin.getServer().getAllServers().stream().findFirst();
+        // Если не нашли - к первому доступному
+        Optional<RegisteredServer> first = plugin.getServer().getAllServers().stream().findFirst();
+        first.ifPresent(s -> player.createConnectionRequest(s).connectWithIndication());
     }
 }
