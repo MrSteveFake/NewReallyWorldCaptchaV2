@@ -44,37 +44,64 @@ public class DatabaseManager {
 
     public boolean isValidToken(String t) {
         try {
-            return c.prepareStatement("SELECT id FROM captcha_verifications WHERE token='" + t + "' AND status='pending'").executeQuery().next();
+            return c.prepareStatement(
+                "SELECT id FROM captcha_verifications WHERE token='" + t + "' AND status='pending'"
+            ).executeQuery().next();
         } catch (SQLException e) { return false; }
     }
 
     public String getPlayerUUIDByToken(String t) {
         try {
-            ResultSet rs = c.prepareStatement("SELECT player_uuid FROM captcha_verifications WHERE token='" + t + "'").executeQuery();
+            ResultSet rs = c.prepareStatement(
+                "SELECT player_uuid FROM captcha_verifications WHERE token='" + t + "'"
+            ).executeQuery();
             if (rs.next()) return rs.getString("player_uuid");
+        } catch (SQLException e) {}
+        return null;
+    }
+
+    // ДОБАВЛЕННЫЙ МЕТОД
+    public String getTokenStatus(String t) {
+        try {
+            ResultSet rs = c.prepareStatement(
+                "SELECT status FROM captcha_verifications WHERE token='" + t + "'"
+            ).executeQuery();
+            if (rs.next()) return rs.getString("status");
         } catch (SQLException e) {}
         return null;
     }
 
     public String pollStatus(String t) {
         try {
-            ResultSet rs = c.prepareStatement("SELECT status FROM captcha_verifications WHERE token='" + t + "' AND status!='pending'").executeQuery();
+            ResultSet rs = c.prepareStatement(
+                "SELECT status FROM captcha_verifications WHERE token='" + t + "' AND status!='pending'"
+            ).executeQuery();
             if (rs.next()) return rs.getString("status");
         } catch (SQLException e) {}
         return null;
     }
 
     public void markSuccess(String t) {
-        try { c.prepareStatement("UPDATE captcha_verifications SET status='success', completed_at=CURRENT_TIMESTAMP WHERE token='" + t + "'").executeUpdate(); } catch (SQLException e) {}
+        try {
+            c.prepareStatement(
+                "UPDATE captcha_verifications SET status='success', completed_at=CURRENT_TIMESTAMP WHERE token='" + t + "'"
+            ).executeUpdate();
+        } catch (SQLException e) {}
     }
 
     public void markFailed(String t) {
-        try { c.prepareStatement("UPDATE captcha_verifications SET status='failed', completed_at=CURRENT_TIMESTAMP WHERE token='" + t + "'").executeUpdate(); } catch (SQLException e) {}
+        try {
+            c.prepareStatement(
+                "UPDATE captcha_verifications SET status='failed', completed_at=CURRENT_TIMESTAMP WHERE token='" + t + "'"
+            ).executeUpdate();
+        } catch (SQLException e) {}
     }
 
     public String getPlayerNameByToken(String t) {
         try {
-            ResultSet rs = c.prepareStatement("SELECT player_name FROM captcha_verifications WHERE token='" + t + "'").executeQuery();
+            ResultSet rs = c.prepareStatement(
+                "SELECT player_name FROM captcha_verifications WHERE token='" + t + "'"
+            ).executeQuery();
             if (rs.next()) return rs.getString("player_name");
         } catch (SQLException e) {}
         return "Unknown";
