@@ -9,104 +9,80 @@ import java.util.Properties;
 public class ConfigManager {
 
     private final Path configFile;
-    private String siteKey;
-    private String secretKey;
-    private int webPort;
-    private int apiPort;
-    private int captchaTimeout;
-    private String captchaMessage;
-    private String successMessage;
-    private String kickMessage;
-    private String failKickMessage;
-    private String captchaUrlFormat;
-    private String targetServer;
+    private String siteKey, secretKey, captchaMessage, successMessage, kickMessage, failKickMessage, captchaUrlFormat, targetServer;
+    private String mysqlHost, mysqlDatabase, mysqlUser, mysqlPassword;
+    private int webPort, apiPort, captchaTimeout, mysqlPort;
 
     public ConfigManager(Path dataDirectory) {
-        this.configFile = dataDirectory.resolve("config.yml");
+        configFile = dataDirectory.resolve("config.yml");
         loadConfig();
     }
 
     public void loadConfig() {
         try {
-            if (!Files.exists(configFile)) {
-                Files.createDirectories(configFile.getParent());
-                createDefaultConfig();
-            }
-
-            Properties props = new Properties();
-            BufferedReader reader = Files.newBufferedReader(configFile);
-            String line;
-            String section = "";
-
-            while ((line = reader.readLine()) != null) {
+            if (!Files.exists(configFile)) { Files.createDirectories(configFile.getParent()); createDefaultConfig(); }
+            Properties p = new Properties();
+            BufferedReader r = Files.newBufferedReader(configFile);
+            String line, section = "";
+            while ((line = r.readLine()) != null) {
                 line = line.trim();
                 if (line.isEmpty() || line.startsWith("#")) continue;
-                if (line.endsWith(":")) {
-                    section = line.substring(0, line.length() - 1).trim();
-                    continue;
-                }
+                if (line.endsWith(":")) { section = line.substring(0, line.length()-1).trim(); continue; }
                 String[] parts = line.split(":", 2);
-                if (parts.length == 2) {
-                    props.setProperty(section + "." + parts[0].trim(), parts[1].trim().replace("\"", ""));
-                }
+                if (parts.length == 2) p.setProperty(section + "." + parts[0].trim(), parts[1].trim().replace("\"", ""));
             }
-            reader.close();
+            r.close();
 
-            siteKey = props.getProperty("recaptcha.site-key", "your-site-key-here");
-            secretKey = props.getProperty("recaptcha.secret-key", "your-secret-key-here");
-            webPort = Integer.parseInt(props.getProperty("webserver.port", "8080"));
-            apiPort = Integer.parseInt(props.getProperty("webserver.api-port", "8081"));
-            captchaTimeout = Integer.parseInt(props.getProperty("recaptcha.timeout-minutes", "5"));
-            captchaMessage = props.getProperty("messages.captcha-message", "&ePlease pass captcha:");
-            successMessage = props.getProperty("messages.success-message", "&aCaptcha passed!");
-            kickMessage = props.getProperty("messages.kick-message", "&cCaptcha timeout!");
-            failKickMessage = props.getProperty("messages.fail-kick-message", "&cCaptcha failed!");
-            captchaUrlFormat = props.getProperty("recaptcha.url-format", "https://your-site.com/captcha?token=${token}");
-            targetServer = props.getProperty("settings.target-server", "lobby");
-
-        } catch (IOException e) {
-            setDefaults();
-        }
+            siteKey = p.getProperty("recaptcha.site-key", "");
+            secretKey = p.getProperty("recaptcha.secret-key", "");
+            captchaTimeout = Integer.parseInt(p.getProperty("recaptcha.timeout-minutes", "5"));
+            captchaMessage = p.getProperty("messages.captcha-message", "&ePass captcha:");
+            successMessage = p.getProperty("messages.success-message", "&aOK!");
+            kickMessage = p.getProperty("messages.kick-message", "&cTimeout!");
+            failKickMessage = p.getProperty("messages.fail-kick-message", "&cFailed!");
+            captchaUrlFormat = p.getProperty("recaptcha.url-format", "https://site.com/captcha.html?token=${token}");
+            targetServer = p.getProperty("settings.target-server", "lobby");
+            
+            mysqlHost = p.getProperty("mysql.host", "localhost");
+            mysqlPort = Integer.parseInt(p.getProperty("mysql.port", "3306"));
+            mysqlDatabase = p.getProperty("mysql.database", "limbocaptcha");
+            mysqlUser = p.getProperty("mysql.user", "root");
+            mysqlPassword = p.getProperty("mysql.password", "");
+        } catch (IOException e) { setDefaults(); }
     }
 
     private void createDefaultConfig() throws IOException {
-        String config = "# LimboCaptcha Configuration by KondrMS\n" +
+        String config = 
             "recaptcha:\n" +
-            "  site-key: \"your-site-key-here\"\n" +
-            "  secret-key: \"your-secret-key-here\"\n" +
-            "  url-format: \"https://your-site.com/captcha?token=${token}\"\n" +
+            "  site-key: \"YOUR_KEY\"\n" +
+            "  secret-key: \"YOUR_SECRET\"\n" +
+            "  url-format: \"https://site.com/captcha.html?token=${token}\"\n" +
             "  timeout-minutes: 5\n" +
-            "webserver:\n" +
-            "  port: 8080\n" +
-            "  api-port: 8081\n" +
+            "mysql:\n" +
+            "  host: \"localhost\"\n" +
+            "  port: 3306\n" +
+            "  database: \"limbocaptcha\"\n" +
+            "  user: \"root\"\n" +
+            "  password: \"\"\n" +
             "settings:\n" +
             "  target-server: \"lobby\"\n" +
             "messages:\n" +
-            "  captcha-message: \"&ePlease pass captcha:\"\n" +
-            "  success-message: \"&aCaptcha passed! Welcome!\"\n" +
-            "  kick-message: \"&cCaptcha timeout!\"\n" +
-            "  fail-kick-message: \"&cCaptcha verification failed!\"\n";
+            "  captcha-message: \"&ePass captcha:\"\n" +
+            "  success-message: \"&aOK!\"\n" +
+            "  kick-message: \"&cTimeout!\"\n" +
+            "  fail-kick-message: \"&cFailed!\"\n";
         Files.writeString(configFile, config);
     }
 
     private void setDefaults() {
-        siteKey = "your-site-key-here";
-        secretKey = "your-secret-key-here";
-        webPort = 8080;
-        apiPort = 8081;
-        captchaTimeout = 5;
-        captchaMessage = "&ePlease pass captcha:";
-        successMessage = "&aCaptcha passed!";
-        kickMessage = "&cCaptcha timeout!";
-        failKickMessage = "&cCaptcha failed!";
-        captchaUrlFormat = "https://your-site.com/captcha?token=${token}";
-        targetServer = "lobby";
+        siteKey = ""; secretKey = ""; captchaTimeout = 5;
+        captchaMessage = "&ePass:"; successMessage = "&aOK!"; kickMessage = "&cTimeout!"; failKickMessage = "&cFailed!";
+        captchaUrlFormat = "https://site.com/captcha.html?token=${token}"; targetServer = "lobby";
+        mysqlHost = "localhost"; mysqlPort = 3306; mysqlDatabase = "limbocaptcha"; mysqlUser = "root"; mysqlPassword = "";
     }
 
     public String getSiteKey() { return siteKey; }
     public String getSecretKey() { return secretKey; }
-    public int getWebPort() { return webPort; }
-    public int getApiPort() { return apiPort; }
     public int getCaptchaTimeout() { return captchaTimeout; }
     public String getCaptchaMessage() { return captchaMessage; }
     public String getSuccessMessage() { return successMessage; }
@@ -114,4 +90,12 @@ public class ConfigManager {
     public String getFailKickMessage() { return failKickMessage; }
     public String getTargetServer() { return targetServer; }
     public String getCaptchaUrl(String token) { return captchaUrlFormat.replace("${token}", token); }
+    public String getMysqlHost() { return mysqlHost; }
+    public int getMysqlPort() { return mysqlPort; }
+    public String getMysqlDatabase() { return mysqlDatabase; }
+    public String getMysqlUser() { return mysqlUser; }
+    public String getMysqlPassword() { return mysqlPassword; }
+    // Совместимость
+    public int getWebPort() { return 8080; }
+    public int getApiPort() { return 8081; }
 }
