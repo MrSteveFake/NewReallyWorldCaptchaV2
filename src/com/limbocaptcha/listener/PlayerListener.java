@@ -10,10 +10,12 @@ import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.scheduler.ScheduledTask;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -25,6 +27,7 @@ public class PlayerListener {
     private final LimboCaptcha plugin;
     private final Set<UUID> passed = ConcurrentHashMap.newKeySet();
     private final Set<UUID> pending = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, ScheduledTask> keepAliveTasks = new ConcurrentHashMap<>();
 
     public PlayerListener(LimboCaptcha plugin) {
         this.plugin = plugin;
@@ -35,12 +38,9 @@ public class PlayerListener {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        // Если уже прошел капчу - пропускаем
-        if (passed.contains(uuid)) {
-            return;
-        }
+        if (passed.contains(uuid)) return;
 
-        plugin.getLogger().info("[CAPTCHA] {} logged in - waiting for auth", player.getUsername());
+        plugin.getLogger().info("[CAPTCHA] {} logged in", player.getUsername());
     }
 
     @Subscribe(order = PostOrder.LAST)
@@ -49,17 +49,11 @@ public class PlayerListener {
         UUID uuid = player.getUniqueId();
         String serverName = event.getServer().getServerInfo().getName();
 
-        plugin.getLogger().info("[CAPTCHA] {} connected to: {}", player.getUsername(), serverName);
+        if (passed.contains(uuid)) return;
 
-        // Если уже прошел капчу - пропускаем
-        if (passed.contains(uuid)) {
-            return;
-        }
-
-        // Если это НЕ limbo/auth сервер (значит авторизация пройдена) - показываем капчу
         if (!serverName.toLowerCase().contains("limbo") && !serverName.toLowerCase().contains("auth")) {
             if (!pending.contains(uuid)) {
-                plugin.getLogger().info("[CAPTCHA] {} passed auth, sending captcha for server: {}", player.getUsername(), serverName);
+                plugin.getLogger().info("[CAPTCHA] {} on {}, sending captcha", player.getUsername(), serverName);
                 sendCaptcha(player);
             }
         }
@@ -71,19 +65,13 @@ public class PlayerListener {
         UUID uuid = player.getUniqueId();
         String serverName = event.getOriginalServer().getServerInfo().getName();
 
-        // Пропускаем limbo/auth сервера
         if (serverName.toLowerCase().contains("limbo") || serverName.toLowerCase().contains("auth")) {
             return;
         }
 
-        // Если не прошел капчу - блокируем подключение к игровым серверам
         if (!passed.contains(uuid)) {
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
-            plugin.getLogger().info("[CAPTCHA] {} BLOCKED from: {}", player.getUsername(), serverName);
-            
-            if (!pending.contains(uuid)) {
-                sendCaptcha(player);
-            }
+            if (!pending.contains(uuid)) sendCaptcha(player);
         }
     }
 
@@ -91,7 +79,6 @@ public class PlayerListener {
     public void onChat(PlayerChatEvent event) {
         if (!passed.contains(event.getPlayer().getUniqueId())) {
             event.setResult(PlayerChatEvent.ChatResult.denied());
-            event.getPlayer().sendMessage(Component.text("Пройдите капчу!", NamedTextColor.RED));
         }
     }
 
@@ -99,12 +86,16 @@ public class PlayerListener {
     public void onDisconnect(DisconnectEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
         pending.remove(uuid);
+        stopKeepAlive(uuid);
     }
 
     private void sendCaptcha(Player player) {
         UUID uuid = player.getUniqueId();
         if (!player.isActive()) return;
         pending.add(uuid);
+
+        // Запускаем keep-alive пакеты каждые 10 секунд
+        startKeepAlive(player);
 
         String ip = player.getRemoteAddress().getAddress().getHostAddress();
         String token = plugin.getCaptchaManager().createToken(uuid, player.getUsername(), ip);
@@ -118,11 +109,13 @@ public class PlayerListener {
         player.sendMessage(Component.text("§eПройдите проверку по ссылке:", NamedTextColor.YELLOW));
         player.sendMessage(Component.text("§b§n" + url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
         player.sendMessage(Component.text(""));
+        player.sendMessage(Component.text("§7Ожидание прохождения капчи...", NamedTextColor.GRAY));
 
-        // Просто запускаем проверку без таймаута
         plugin.getCaptchaManager().requestVerification(uuid)
             .thenAccept(success -> {
                 pending.remove(uuid);
+                stopKeepAlive(uuid);
+                
                 if (success) {
                     passed.add(uuid);
                     plugin.getLogger().info("[CAPTCHA] {} PASSED!", player.getUsername());
@@ -133,5 +126,33 @@ public class PlayerListener {
                     player.sendMessage(Component.text(""));
                 }
             });
+    }
+
+    // Keep-alive чтобы сервер не кикал за AFK
+    private void startKeepAlive(Player player) {
+        UUID uuid = player.getUniqueId();
+        stopKeepAlive(uuid);
+
+        ScheduledTask task = plugin.getServer().getScheduler()
+            .buildTask(plugin, () -> {
+                if (player.isActive() && pending.contains(uuid)) {
+                    // Отправляем пустой пакет (keep-alive)
+                    player.sendMessage(Component.text(""));
+                    player.sendMessage(Component.text("§7⏳ Ожидание прохождения капчи...", NamedTextColor.DARK_GRAY));
+                    player.sendMessage(Component.text("§7Ссылка действительна, не перезаходите.", NamedTextColor.DARK_GRAY));
+                    player.sendMessage(Component.text(""));
+                }
+            })
+            .repeat(15, TimeUnit.SECONDS)
+            .schedule();
+
+        keepAliveTasks.put(uuid, task);
+    }
+
+    private void stopKeepAlive(UUID uuid) {
+        ScheduledTask task = keepAliveTasks.remove(uuid);
+        if (task != null) {
+            task.cancel();
+        }
     }
 }
