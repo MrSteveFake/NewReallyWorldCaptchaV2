@@ -60,21 +60,10 @@ public class DatabaseManager {
         return null;
     }
 
-    // ДОБАВЛЕННЫЙ МЕТОД
     public String getTokenStatus(String t) {
         try {
             ResultSet rs = c.prepareStatement(
                 "SELECT status FROM captcha_verifications WHERE token='" + t + "'"
-            ).executeQuery();
-            if (rs.next()) return rs.getString("status");
-        } catch (SQLException e) {}
-        return null;
-    }
-
-    public String pollStatus(String t) {
-        try {
-            ResultSet rs = c.prepareStatement(
-                "SELECT status FROM captcha_verifications WHERE token='" + t + "' AND status!='pending'"
             ).executeQuery();
             if (rs.next()) return rs.getString("status");
         } catch (SQLException e) {}
@@ -86,7 +75,8 @@ public class DatabaseManager {
             c.prepareStatement(
                 "UPDATE captcha_verifications SET status='success', completed_at=CURRENT_TIMESTAMP WHERE token='" + t + "'"
             ).executeUpdate();
-        } catch (SQLException e) {}
+            System.out.println("[DB] Marked SUCCESS: " + t);
+        } catch (SQLException e) { e.printStackTrace(); }
     }
 
     public void markFailed(String t) {
