@@ -1,6 +1,5 @@
 package com.limbocaptcha;
 
-import com.limbocaptcha.api.ApiServer;
 import com.limbocaptcha.captcha.CaptchaManager;
 import com.limbocaptcha.config.ConfigManager;
 import com.limbocaptcha.database.DatabaseManager;
@@ -13,17 +12,18 @@ import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 import jakarta.inject.Inject;
 import org.slf4j.Logger;
+
 import java.nio.file.Path;
 
 @Plugin(id = "limbocaptcha", name = "LimboCaptcha", version = "1.0.0", authors = {"KondrMS"})
 public class LimboCaptcha {
+
     private final ProxyServer server;
     private final Logger logger;
     private final Path dataDirectory;
     private ConfigManager configManager;
     private DatabaseManager databaseManager;
     private CaptchaManager captchaManager;
-    private ApiServer apiServer;
     private static LimboCaptcha instance;
 
     @Inject
@@ -36,18 +36,24 @@ public class LimboCaptcha {
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) {
         instance = this;
-        configManager = new ConfigManager(dataDirectory);
-        databaseManager = new DatabaseManager(dataDirectory);
-        captchaManager = new CaptchaManager(configManager, databaseManager);
-        apiServer = new ApiServer(configManager, captchaManager, databaseManager);
-        apiServer.start();
+        this.configManager = new ConfigManager(dataDirectory);
+        
+        // Подключение к MySQL
+        this.databaseManager = new DatabaseManager(
+            configManager.getMysqlHost(),
+            configManager.getMysqlPort(),
+            configManager.getMysqlDatabase(),
+            configManager.getMysqlUser(),
+            configManager.getMysqlPassword()
+        );
+        
+        this.captchaManager = new CaptchaManager(configManager, databaseManager);
         server.getEventManager().register(this, new PlayerListener(this));
-        logger.info("LimboCaptcha loaded! Ports: Web={}, API={}", configManager.getWebPort(), configManager.getApiPort());
+        logger.info("LimboCaptcha loaded with MySQL integration!");
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
-        if (apiServer != null) apiServer.stop();
         if (captchaManager != null) captchaManager.shutdown();
         if (databaseManager != null) databaseManager.close();
     }
