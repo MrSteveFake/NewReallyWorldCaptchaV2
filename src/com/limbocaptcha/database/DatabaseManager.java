@@ -1,50 +1,73 @@
 package com.limbocaptcha.database;
 
-import java.nio.file.Path;
 import java.sql.*;
 import java.util.UUID;
 
 public class DatabaseManager {
 
     private Connection connection;
+    private final String url;
+    private final String user;
+    private final String password;
 
-    public DatabaseManager(Path dataDirectory) {
+    public DatabaseManager(String host, int port, String database, String user, String password) {
+        this.url = "jdbc:mysql://" + host + ":" + port + "/" + database + "?useSSL=false&allowPublicKeyRetrieval=true";
+        this.user = user;
+        this.password = password;
+        connect();
+    }
+
+    private void connect() {
         try {
-            Path dbPath = dataDirectory.resolve("database.db");
-            Class.forName("org.sqlite.JDBC");
-            connection = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toString());
+            Class.forName("com.mysql.cj.jdbc.Driver");
+            connection = DriverManager.getConnection(url, user, password);
             createTables();
-            System.out.println("[LimboCaptcha] Database connected!");
+            System.out.println("[LimboCaptcha] MySQL connected!");
         } catch (Exception e) {
-            System.err.println("[LimboCaptcha] Database error: " + e.getMessage());
+            System.err.println("[LimboCaptcha] MySQL error: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     private void createTables() throws SQLException {
         String sql = "CREATE TABLE IF NOT EXISTS captcha_verifications (" +
-            "id INTEGER PRIMARY KEY AUTOINCREMENT," +
-            "player_uuid TEXT NOT NULL," +
-            "player_name TEXT NOT NULL," +
-            "token TEXT NOT NULL UNIQUE," +
-            "status TEXT NOT NULL DEFAULT 'pending'," +
-            "ip_address TEXT," +
+            "id INT AUTO_INCREMENT PRIMARY KEY," +
+            "player_uuid VARCHAR(36) NOT NULL," +
+            "player_name VARCHAR(32) NOT NULL," +
+            "token VARCHAR(128) NOT NULL UNIQUE," +
+            "status VARCHAR(20) NOT NULL DEFAULT 'pending'," +
+            "ip_address VARCHAR(45)," +
             "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP," +
-            "completed_at TIMESTAMP" +
+            "completed_at TIMESTAMP NULL," +
+            "INDEX idx_token (token)," +
+            "INDEX idx_uuid (player_uuid)," +
+            "INDEX idx_status (status)" +
             ")";
         connection.createStatement().execute(sql);
     }
 
-    public String createVerification(UUID playerUuid, String playerName, String token, String ip) {
+    public void ensureConnection() {
         try {
-            // Удаляем старые записи этого игрока
-            PreparedStatement deleteOld = connection.prepareStatement(
+            if (connection == null || connection.isClosed() || !connection.isValid(2)) {
+                connect();
+            }
+        } catch (SQLException e) {
+            connect();
+        }
+    }
+
+    public String createVerification(UUID playerUuid, String playerName, String token, String ip) {
+        ensureConnection();
+        try {
+            // Удаляем старые записи
+            PreparedStatement del = connection.prepareStatement(
                 "DELETE FROM captcha_verifications WHERE player_uuid = ? OR token = ?"
             );
-            deleteOld.setString(1, playerUuid.toString());
-            deleteOld.setString(2, token);
-            deleteOld.executeUpdate();
+            del.setString(1, playerUuid.toString());
+            del.setString(2, token);
+            del.executeUpdate();
 
-            // Создаем новую запись
+            // Создаем новую
             PreparedStatement ps = connection.prepareStatement(
                 "INSERT INTO captcha_verifications (player_uuid, player_name, token, status, ip_address) VALUES (?, ?, ?, 'pending', ?)"
             );
@@ -55,16 +78,16 @@ public class DatabaseManager {
             ps.executeUpdate();
             return token;
         } catch (SQLException e) {
-            System.err.println("[LimboCaptcha] Database insert error: " + e.getMessage());
             e.printStackTrace();
         }
         return null;
     }
 
     public boolean isValidToken(String token) {
+        ensureConnection();
         try {
             PreparedStatement ps = connection.prepareStatement(
-                "SELECT status FROM captcha_verifications WHERE token = ? AND status = 'pending'"
+                "SELECT id FROM captcha_verifications WHERE token = ? AND status = 'pending'"
             );
             ps.setString(1, token);
             ResultSet rs = ps.executeQuery();
@@ -75,6 +98,7 @@ public class DatabaseManager {
     }
 
     public String getPlayerUUIDByToken(String token) {
+        ensureConnection();
         try {
             PreparedStatement ps = connection.prepareStatement(
                 "SELECT player_uuid FROM captcha_verifications WHERE token = ?"
@@ -87,6 +111,7 @@ public class DatabaseManager {
     }
 
     public String getTokenStatus(String token) {
+        ensureConnection();
         try {
             PreparedStatement ps = connection.prepareStatement(
                 "SELECT status FROM captcha_verifications WHERE token = ?"
@@ -99,9 +124,10 @@ public class DatabaseManager {
     }
 
     public void markSuccess(String token) {
+        ensureConnection();
         try {
             PreparedStatement ps = connection.prepareStatement(
-                "UPDATE captcha_verifications SET status = 'success', completed_at = CURRENT_TIMESTAMP WHERE token = ?"
+                "UPDATE captcha_verifications SET status = 'success', completed_at = NOW() WHERE token = ?"
             );
             ps.setString(1, token);
             ps.executeUpdate();
@@ -111,9 +137,10 @@ public class DatabaseManager {
     }
 
     public void markFailed(String token) {
+        ensureConnection();
         try {
             PreparedStatement ps = connection.prepareStatement(
-                "UPDATE captcha_verifications SET status = 'failed', completed_at = CURRENT_TIMESTAMP WHERE token = ?"
+                "UPDATE captcha_verifications SET status = 'failed', completed_at = NOW() WHERE token = ?"
             );
             ps.setString(1, token);
             ps.executeUpdate();
@@ -123,6 +150,7 @@ public class DatabaseManager {
     }
 
     public String getPlayerNameByToken(String token) {
+        ensureConnection();
         try {
             PreparedStatement ps = connection.prepareStatement(
                 "SELECT player_name FROM captcha_verifications WHERE token = ?"
@@ -134,18 +162,18 @@ public class DatabaseManager {
         return "Unknown";
     }
 
-    public void cleanupExpired(int timeoutMinutes) {
+    // Метод для опроса статуса из плагина
+    public String pollStatus(String token) {
+        ensureConnection();
         try {
             PreparedStatement ps = connection.prepareStatement(
-                "DELETE FROM captcha_verifications WHERE status = 'pending' AND created_at < datetime('now', '-" + timeoutMinutes + " minutes')"
+                "SELECT status FROM captcha_verifications WHERE token = ? AND status != 'pending'"
             );
-            int deleted = ps.executeUpdate();
-            if (deleted > 0) {
-                System.out.println("[LimboCaptcha] Cleaned up " + deleted + " expired tokens");
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
+            ps.setString(1, token);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) return rs.getString("status");
+        } catch (SQLException e) {}
+        return null;
     }
 
     public void close() {
