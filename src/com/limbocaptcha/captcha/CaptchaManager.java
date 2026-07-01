@@ -18,6 +18,7 @@ public class CaptchaManager {
     private final ConfigManager cm;
     private final DatabaseManager dm;
     private final Map<UUID, CompletableFuture<Boolean>> pending = new ConcurrentHashMap<>();
+    private final Map<UUID, String> tokens = new ConcurrentHashMap<>();
     private static final SecureRandom R = new SecureRandom();
     private static final String CH = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -47,13 +48,13 @@ public class CaptchaManager {
     public CompletableFuture<Boolean> requestVerification(UUID u) {
         CompletableFuture<Boolean> f = new CompletableFuture<>();
         pending.put(u, f);
-        // НЕ ДОБАВЛЯЕМ orTimeout!
         return f;
     }
 
     public void cancelVerification(UUID u) {
         CompletableFuture<Boolean> f = pending.remove(u);
         if (f != null && !f.isDone()) f.complete(false);
+        tokens.remove(u);
     }
 
     public boolean verifyCaptcha(String token, String recaptcha) {
@@ -75,13 +76,9 @@ public class CaptchaManager {
             }
             if (conn.getResponseCode() == 200) {
                 String body = new String(conn.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-                boolean success = body.contains("\"success\": true") || body.contains("\"success\":true");
-                System.out.println("[LimboCaptcha] Google reCAPTCHA response: " + body);
-                System.out.println("[LimboCaptcha] Verification result: " + success);
-                return success;
+                return body.contains("\"success\": true") || body.contains("\"success\":true");
             }
         } catch (Exception e) {
-            System.err.println("[LimboCaptcha] verifyCaptcha error: " + e.getMessage());
             e.printStackTrace();
         }
         return false;
@@ -89,48 +86,35 @@ public class CaptchaManager {
 
     public void markSuccess(String token) {
         dm.markSuccess(token);
-        System.out.println("[LimboCaptcha] markSuccess: " + token);
         String uid = dm.getPlayerUUIDByToken(token);
         if (uid != null) {
             try {
                 UUID u = UUID.fromString(uid);
                 CompletableFuture<Boolean> f = pending.get(u);
-                if (f != null && !f.isDone()) {
-                    f.complete(true);
-                    System.out.println("[LimboCaptcha] Future completed SUCCESS for: " + u);
-                } else {
-                    System.out.println("[LimboCaptcha] No pending future for: " + u);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+                if (f != null && !f.isDone()) f.complete(true);
+            } catch (Exception e) {}
         }
     }
 
     public void markFailed(String token) {
         dm.markFailed(token);
-        System.out.println("[LimboCaptcha] markFailed: " + token);
         String uid = dm.getPlayerUUIDByToken(token);
         if (uid != null) {
             try {
                 UUID u = UUID.fromString(uid);
                 CompletableFuture<Boolean> f = pending.get(u);
-                if (f != null && !f.isDone()) {
-                    f.complete(false);
-                    System.out.println("[LimboCaptcha] Future completed FAILED for: " + u);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+                if (f != null && !f.isDone()) f.complete(false);
+            } catch (Exception e) {}
         }
     }
 
     public String getPlayerNameByToken(String t) { return dm.getPlayerNameByToken(t); }
+
     public void shutdown() {
         pending.values().forEach(f -> { if (!f.isDone()) f.complete(false); });
         pending.clear();
+        tokens.clear();
     }
 
     public ConfigManager getConfigManager() { return cm; }
-    private final Map<UUID, String> tokens = new ConcurrentHashMap<>();
 }
