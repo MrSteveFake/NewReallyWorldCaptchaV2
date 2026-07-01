@@ -14,7 +14,6 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -26,8 +25,7 @@ public class PlayerListener {
     private final LimboCaptcha plugin;
     private final Set<UUID> passed = ConcurrentHashMap.newKeySet();
     private final Set<UUID> pending = ConcurrentHashMap.newKeySet();
-    private final Map<UUID, Long> banned = new ConcurrentHashMap<>();
-    private static final long BAN_TIME = TimeUnit.MINUTES.toMillis(5);
+    // Убираем BAN систему полностью
 
     public PlayerListener(LimboCaptcha plugin) {
         this.plugin = plugin;
@@ -38,21 +36,7 @@ public class PlayerListener {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        // Проверка бана
-        Long banExpire = banned.get(uuid);
-        if (banExpire != null) {
-            if (System.currentTimeMillis() < banExpire) {
-                long min = (banExpire - System.currentTimeMillis()) / 60000;
-                player.disconnect(Component.text(
-                    "§c§lВЫ ЗАБЛОКИРОВАНЫ!\n\n" +
-                    "§7Причина: §fПодозрительная активность\n" +
-                    "§7До разблокировки: §f" + min + " мин."
-                ));
-                return;
-            }
-            banned.remove(uuid);
-        }
-
+        // Сбрасываем статусы при входе
         passed.remove(uuid);
         pending.add(uuid);
 
@@ -67,6 +51,7 @@ public class PlayerListener {
         UUID uuid = event.getPlayer().getUniqueId();
         passed.remove(uuid);
         pending.remove(uuid);
+        plugin.getCaptchaManager().cancelVerification(uuid);
     }
 
     @Subscribe(order = PostOrder.FIRST)
@@ -81,6 +66,7 @@ public class PlayerListener {
     public void onChat(PlayerChatEvent event) {
         if (!passed.contains(event.getPlayer().getUniqueId())) {
             event.setResult(PlayerChatEvent.ChatResult.denied());
+            event.getPlayer().sendMessage(Component.text("Пройдите проверку капчи!", NamedTextColor.RED));
         }
     }
 
@@ -104,50 +90,44 @@ public class PlayerListener {
         player.sendMessage(Component.text("§b§n" + url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
         player.sendMessage(Component.text(""));
         player.sendMessage(Component.text("§7Ссылка действительна " + plugin.getConfigManager().getCaptchaTimeout() + " мин.", NamedTextColor.GRAY));
-        player.sendMessage(Component.text("§c⚠ При провале — бан 5 минут!", NamedTextColor.RED));
-        player.sendMessage(Component.text("§7После прохождения введите: §e/captcha ok", NamedTextColor.GRAY));
+        player.sendMessage(Component.text("§7Если ссылка истекла — перезайдите для получения новой.", NamedTextColor.GRAY));
 
-        // Ждем таймаут
-        plugin.getServer().getScheduler()
-            .buildTask(plugin, () -> {
-                if (pending.contains(uuid) && player.isActive()) {
-                    pending.remove(uuid);
-                    banned.put(uuid, System.currentTimeMillis() + BAN_TIME);
-                    plugin.getLogger().warn("[CAPTCHA] {} TIMEOUT - BANNED!", player.getUsername());
-                    player.disconnect(Component.text(
-                        "§c§lВремя истекло!\n\n" +
-                        "§7Вы заблокированы на §f5 минут§7.\n" +
-                        "§7Причина: §fПодозрительная активность"
-                    ));
+        // Запускаем проверку с таймаутом, но НЕ КИКАЕМ
+        plugin.getCaptchaManager().requestVerification(uuid)
+            .orTimeout(plugin.getConfigManager().getCaptchaTimeout(), TimeUnit.MINUTES)
+            .thenAccept(success -> {
+                pending.remove(uuid);
+                if (success) {
+                    passed.add(uuid);
+                    String ok = plugin.getConfigManager().getSuccessMessage().replace("&", "§");
+                    player.sendMessage(Component.text(""));
+                    player.sendMessage(Component.text(ok, NamedTextColor.GREEN));
+                    player.sendMessage(Component.text("§7Добро пожаловать на §6§lFakeWorld§7!", NamedTextColor.GREEN));
+                    plugin.getLogger().info("[CAPTCHA] {} PASSED!", player.getUsername());
+
+                    // Подключаем к серверу
+                    Optional<RegisteredServer> target = plugin.getServer()
+                        .getServer(plugin.getConfigManager().getTargetServer());
+                    if (target.isPresent()) {
+                        player.createConnectionRequest(target.get()).connect();
+                    } else {
+                        player.sendMessage(Component.text("§7Используйте §e/server §7для подключения", NamedTextColor.GRAY));
+                    }
+                } else {
+                    // НЕ КИКАЕМ! Просто отправляем сообщение
+                    plugin.getLogger().info("[CAPTCHA] {} FAILED or TIMEOUT", player.getUsername());
+                    player.sendMessage(Component.text(""));
+                    player.sendMessage(Component.text("§cСсылка устарела или проверка не пройдена.", NamedTextColor.RED));
+                    player.sendMessage(Component.text("§7Перезайдите в игру чтобы получить новую ссылку.", NamedTextColor.GRAY));
+                    player.sendMessage(Component.text(""));
+                    // Не кикаем, игрок может перезайти сам
                 }
             })
-            .delay(plugin.getConfigManager().getCaptchaTimeout(), TimeUnit.MINUTES)
-            .schedule();
-    }
-
-    public void completeCaptcha(Player player, boolean success) {
-        UUID uuid = player.getUniqueId();
-        if (!pending.contains(uuid)) return;
-        pending.remove(uuid);
-
-        if (success) {
-            passed.add(uuid);
-            player.sendMessage(Component.text(plugin.getConfigManager().getSuccessMessage().replace("&", "§"), NamedTextColor.GREEN));
-            plugin.getLogger().info("[CAPTCHA] {} PASSED!", player.getUsername());
-            
-            Optional<RegisteredServer> target = plugin.getServer().getServer(plugin.getConfigManager().getTargetServer());
-            target.ifPresent(rs -> player.createConnectionRequest(rs).connect());
-        } else {
-            banned.put(uuid, System.currentTimeMillis() + BAN_TIME);
-            plugin.getLogger().warn("[CAPTCHA] {} FAILED - BANNED!", player.getUsername());
-            player.disconnect(Component.text(
-                "§c§lПодозрительная активность!\n\n" +
-                "§7Вы заблокированы на §f5 минут§7."
-            ));
-        }
-    }
-
-    public boolean isPending(UUID uuid) {
-        return pending.contains(uuid);
+            .exceptionally(t -> {
+                pending.remove(uuid);
+                plugin.getLogger().info("[CAPTCHA] {} ERROR: {}", player.getUsername(), t.getMessage());
+                // НЕ КИКАЕМ при ошибке
+                return null;
+            });
     }
 }
