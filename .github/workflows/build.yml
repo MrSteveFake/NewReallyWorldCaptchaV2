@@ -20,9 +20,7 @@ jobs:
         distribution: 'temurin'
     
     - name: Create directories
-      run: |
-        mkdir -p libs
-        mkdir -p build
+      run: mkdir -p libs build
     
     - name: Download dependencies
       run: |
@@ -41,15 +39,14 @@ jobs:
         wget -q -O libs/failureaccess.jar https://repo1.maven.org/maven2/com/google/guava/failureaccess/1.0.2/failureaccess-1.0.2.jar
         wget -q -O libs/error-prone-annotations.jar https://repo1.maven.org/maven2/com/google/errorprone/error_prone_annotations/2.23.0/error_prone_annotations-2.23.0.jar
         wget -q -O libs/jsr305.jar https://repo1.maven.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.jar
-        wget -q -O libs/sqlite-jdbc.jar https://repo1.maven.org/maven2/org/xerial/sqlite-jdbc/3.45.1.0/sqlite-jdbc-3.45.1.0.jar
+        wget -q -O libs/mysql-connector.jar https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/8.3.0/mysql-connector-j-8.3.0.jar
+        wget -q -O libs/protobuf-java.jar https://repo1.maven.org/maven2/com/google/protobuf/protobuf-java/3.25.3/protobuf-java-3.25.3.jar
         echo "OK: libraries downloaded"
     
     - name: Compile Java
       run: |
         CLASSPATH=""
-        for jar in libs/*.jar; do
-          CLASSPATH="$CLASSPATH:$jar"
-        done
+        for jar in libs/*.jar; do CLASSPATH="$CLASSPATH:$jar"; done
         find . -name "*.java" -type f > sources.txt
         javac -d build -cp "${CLASSPATH#:}" @sources.txt
         echo "OK: compilation done"
@@ -64,9 +61,7 @@ jobs:
       run: |
         mkdir -p build/merged
         cd build/merged
-        for jar in ../../libs/*.jar; do
-          jar xf "$jar" 2>/dev/null
-        done
+        for jar in ../../libs/*.jar; do jar xf "$jar" 2>/dev/null; done
         cp -r ../com . 2>/dev/null
         cp ../velocity-plugin.json . 2>/dev/null
         cp ../config.yml . 2>/dev/null
