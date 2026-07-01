@@ -9,14 +9,12 @@ import com.velocitypowered.api.event.player.PlayerChatEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.proxy.Player;
-import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
 import net.kyori.adventure.text.format.NamedTextColor;
 
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,19 +26,26 @@ public class PlayerListener {
     private final Set<UUID> passed = ConcurrentHashMap.newKeySet();
     private final Set<UUID> pending = ConcurrentHashMap.newKeySet();
     private final Map<UUID, ScheduledTask> keepAliveTasks = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> lastCaptchaTime = new ConcurrentHashMap<>();
 
     public PlayerListener(LimboCaptcha plugin) {
         this.plugin = plugin;
     }
 
-    @Subscribe(order = PostOrder.LAST)
+    @Subscribe(order = PostOrder.FIRST)
     public void onLogin(LoginEvent event) {
         Player player = event.getPlayer();
         UUID uuid = player.getUniqueId();
 
-        if (passed.contains(uuid)) return;
+        // Если уже проходил капчу недавно - пропускаем
+        Long lastTime = lastCaptchaTime.get(uuid);
+        if (lastTime != null && (System.currentTimeMillis() - lastTime) < TimeUnit.HOURS.toMillis(1)) {
+            passed.add(uuid);
+            plugin.getLogger().info("[CAPTCHA] {} already verified", player.getUsername());
+            return;
+        }
 
-        plugin.getLogger().info("[CAPTCHA] {} logged in", player.getUsername());
+        plugin.getLogger().info("[CAPTCHA] {} connected", player.getUsername());
     }
 
     @Subscribe(order = PostOrder.LAST)
@@ -53,7 +58,6 @@ public class PlayerListener {
 
         if (!serverName.toLowerCase().contains("limbo") && !serverName.toLowerCase().contains("auth")) {
             if (!pending.contains(uuid)) {
-                plugin.getLogger().info("[CAPTCHA] {} on {}, sending captcha", player.getUsername(), serverName);
                 sendCaptcha(player);
             }
         }
@@ -76,17 +80,15 @@ public class PlayerListener {
     }
 
     @Subscribe
-    public void onChat(PlayerChatEvent event) {
-        if (!passed.contains(event.getPlayer().getUniqueId())) {
-            event.setResult(PlayerChatEvent.ChatResult.denied());
-        }
-    }
-
-    @Subscribe
     public void onDisconnect(DisconnectEvent event) {
         UUID uuid = event.getPlayer().getUniqueId();
         pending.remove(uuid);
         stopKeepAlive(uuid);
+        // Сохраняем время прохождения капчи
+        if (passed.contains(uuid)) {
+            lastCaptchaTime.put(uuid, System.currentTimeMillis());
+        }
+        passed.remove(uuid);
     }
 
     private void sendCaptcha(Player player) {
@@ -94,22 +96,20 @@ public class PlayerListener {
         if (!player.isActive()) return;
         pending.add(uuid);
 
-        // Запускаем keep-alive пакеты каждые 10 секунд
         startKeepAlive(player);
 
         String ip = player.getRemoteAddress().getAddress().getHostAddress();
         String token = plugin.getCaptchaManager().createToken(uuid, player.getUsername(), ip);
         String url = plugin.getConfigManager().getCaptchaUrl(token);
 
-        plugin.getLogger().info("[CAPTCHA] SEND to {} | Token: {}", player.getUsername(), token);
+        plugin.getLogger().info("[CAPTCHA] Player: {} Token: {}", player.getUsername(), token);
 
         player.sendMessage(Component.text(""));
-        player.sendMessage(Component.text("§6§lFakeWorld §7▸ §fПроверка безопасности", NamedTextColor.GOLD));
+        player.sendMessage(Component.text("§6§lПроверка безопасности", NamedTextColor.GOLD));
         player.sendMessage(Component.text(""));
         player.sendMessage(Component.text("§eПройдите проверку по ссылке:", NamedTextColor.YELLOW));
         player.sendMessage(Component.text("§b§n" + url, NamedTextColor.AQUA).clickEvent(ClickEvent.openUrl(url)));
         player.sendMessage(Component.text(""));
-        player.sendMessage(Component.text("§7Ожидание прохождения капчи...", NamedTextColor.GRAY));
 
         plugin.getCaptchaManager().requestVerification(uuid)
             .thenAccept(success -> {
@@ -118,17 +118,15 @@ public class PlayerListener {
                 
                 if (success) {
                     passed.add(uuid);
+                    lastCaptchaTime.put(uuid, System.currentTimeMillis());
                     plugin.getLogger().info("[CAPTCHA] {} PASSED!", player.getUsername());
-
-                    player.sendMessage(Component.text(""));
+                    
                     player.sendMessage(Component.text("§a§l✅ Проверка пройдена!", NamedTextColor.GREEN));
-                    player.sendMessage(Component.text("§7Добро пожаловать! Используйте §e/server §7для игры.", NamedTextColor.GREEN));
-                    player.sendMessage(Component.text(""));
+                    player.sendMessage(Component.text("§7Используйте /server для игры", NamedTextColor.GREEN));
                 }
             });
     }
 
-    // Keep-alive чтобы сервер не кикал за AFK
     private void startKeepAlive(Player player) {
         UUID uuid = player.getUniqueId();
         stopKeepAlive(uuid);
@@ -136,11 +134,7 @@ public class PlayerListener {
         ScheduledTask task = plugin.getServer().getScheduler()
             .buildTask(plugin, () -> {
                 if (player.isActive() && pending.contains(uuid)) {
-                    // Отправляем пустой пакет (keep-alive)
-                    player.sendMessage(Component.text(""));
-                    player.sendMessage(Component.text("§7⏳ Ожидание прохождения капчи...", NamedTextColor.DARK_GRAY));
-                    player.sendMessage(Component.text("§7Ссылка действительна, не перезаходите.", NamedTextColor.DARK_GRAY));
-                    player.sendMessage(Component.text(""));
+                    player.sendMessage(Component.text("§7⏳ Ожидание капчи...", NamedTextColor.DARK_GRAY));
                 }
             })
             .repeat(15, TimeUnit.SECONDS)
@@ -151,8 +145,6 @@ public class PlayerListener {
 
     private void stopKeepAlive(UUID uuid) {
         ScheduledTask task = keepAliveTasks.remove(uuid);
-        if (task != null) {
-            task.cancel();
-        }
+        if (task != null) task.cancel();
     }
 }
