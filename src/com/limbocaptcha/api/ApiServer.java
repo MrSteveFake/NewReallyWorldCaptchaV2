@@ -28,9 +28,9 @@ public class ApiServer {
             s = HttpServer.create(new InetSocketAddress(cm.getApiPort()), 0);
             s.createContext("/api/verify", new V());
             s.createContext("/api/check", new C());
-            s.createContext("/api/status", new St());
             s.setExecutor(null);
             s.start();
+            System.out.println("[LimboCaptcha] API server started on port " + cm.getApiPort());
         } catch (IOException e) { e.printStackTrace(); }
     }
 
@@ -39,20 +39,46 @@ public class ApiServer {
     class V implements HttpHandler {
         public void handle(HttpExchange ex) throws IOException {
             if ("OPTIONS".equals(ex.getRequestMethod())) { c(ex); return; }
+
             String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            System.out.println("[API] Received: " + body);
+
             Map<String, String> m = new HashMap<>();
             for (String p : body.split("&")) {
                 String[] kv = p.split("=", 2);
                 if (kv.length == 2) m.put(URLDecoder.decode(kv[0], StandardCharsets.UTF_8), URLDecoder.decode(kv[1], StandardCharsets.UTF_8));
             }
-            String t = m.get("token"), r = m.get("g-recaptcha-response");
+
+            String token = m.get("token");
+            String recaptcha = m.get("g-recaptcha-response");
+
+            System.out.println("[API] Token: " + token);
+            System.out.println("[API] reCAPTCHA length: " + (recaptcha != null ? recaptcha.length() : 0));
+
             JsonObject j = new JsonObject();
-            if (t == null || r == null) { j.addProperty("success", false); j(ex, 400, g.toJson(j)); return; }
-            boolean ok = cap.verifyCaptcha(t, r);
+
+            if (token == null || recaptcha == null) {
+                j.addProperty("success", false);
+                j.addProperty("error", "Missing parameters");
+                j(ex, 400, g.toJson(j));
+                return;
+            }
+
+            boolean ok = cap.verifyCaptcha(token, recaptcha);
             j.addProperty("success", ok);
-            if (ok) { cap.markSuccess(t); j.addProperty("player", cap.getPlayerNameByToken(t)); }
-            else cap.markFailed(t);
-            j(ex, 200, g.toJson(j));
+
+            if (ok) {
+                cap.markSuccess(token);
+                j.addProperty("player", cap.getPlayerNameByToken(token));
+                System.out.println("[API] VERIFICATION SUCCESS for token: " + token);
+            } else {
+                cap.markFailed(token);
+                System.out.println("[API] VERIFICATION FAILED for token: " + token);
+            }
+
+            String response = g.toJson(j);
+            System.out.println("[API] Response: " + response);
+            j(ex, 200, response);
         }
     }
 
@@ -63,21 +89,6 @@ public class ApiServer {
             JsonObject j = new JsonObject();
             if (t == null) j.addProperty("valid", false);
             else { boolean v = dm.isValidToken(t); j.addProperty("valid", v); if (v) j.addProperty("player", dm.getPlayerNameByToken(t)); }
-            j(ex, 200, g.toJson(j));
-        }
-    }
-
-    class St implements HttpHandler {
-        public void handle(HttpExchange ex) throws IOException {
-            if ("OPTIONS".equals(ex.getRequestMethod())) { c(ex); return; }
-            String t = qp(ex.getRequestURI().getQuery(), "token");
-            JsonObject j = new JsonObject();
-            if (t == null) j.addProperty("status", "error");
-            else {
-                String status = dm.getTokenStatus(t);
-                j.addProperty("status", status != null ? status : "not_found");
-                j.addProperty("player", dm.getPlayerNameByToken(t));
-            }
             j(ex, 200, g.toJson(j));
         }
     }
