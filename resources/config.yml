@@ -2,7 +2,7 @@ recaptcha:
   site-key: "YOUR_SITE_KEY"
   secret-key: "YOUR_SECRET_KEY"
   url-format: "https://captcha.fakeworld.pw/captcha.html?token=${token}"
-  timeout-minutes: 5
+  timeout-minutes: 10
 
 webserver:
   port: 8080
