@@ -14,27 +14,32 @@ import java.nio.charset.StandardCharsets;
 
 public class WebServer {
 
-    private final ConfigManager configManager;
-    private final DatabaseManager databaseManager;
-    private final CaptchaManager captchaManager;
+    private final ConfigManager cm;
+    private final DatabaseManager dm;
+    private final CaptchaManager cap;
     private HttpServer server;
 
-    public WebServer(ConfigManager configManager, DatabaseManager databaseManager, CaptchaManager captchaManager) {
-        this.configManager = configManager;
-        this.databaseManager = databaseManager;
-        this.captchaManager = captchaManager;
+    public WebServer(ConfigManager cm, DatabaseManager dm, CaptchaManager cap) {
+        this.cm = cm;
+        this.dm = dm;
+        this.cap = cap;
     }
 
     public void start() {
         try {
-            server = HttpServer.create(new InetSocketAddress(configManager.getWebPort()), 0);
-            server.createContext("/captcha", new CaptchaPageHandler());
-            server.createContext("/verify", new VerifyHandler());
+            server = HttpServer.create(new InetSocketAddress(cm.getWebPort()), 0);
+            
+            // Прием результата от сайта (САМЫЙ ВАЖНЫЙ)
+            server.createContext("/submit", new SubmitHandler());
+            
+            // Проверка токена
+            server.createContext("/check", new CheckHandler());
+            
             server.setExecutor(null);
             server.start();
-            System.out.println("[LimboCaptcha] Web server started on port " + configManager.getWebPort());
+            System.out.println("[LimboCaptcha] WebServer started on port " + cm.getWebPort());
         } catch (IOException e) {
-            System.err.println("[LimboCaptcha] WebServer error: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -42,8 +47,66 @@ public class WebServer {
         if (server != null) server.stop(0);
     }
 
-    class CaptchaPageHandler implements HttpHandler {
+    // Сайт отправляет сюда результат
+    class SubmitHandler implements HttpHandler {
         public void handle(HttpExchange ex) throws IOException {
+            if ("OPTIONS".equals(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                ex.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                ex.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+                ex.sendResponseHeaders(204, -1);
+                return;
+            }
+
+            if ("POST".equals(ex.getRequestMethod())) {
+                String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                System.out.println("[SUBMIT] Received: " + body);
+
+                String token = null;
+                String recaptcha = "";
+
+                for (String p : body.split("&")) {
+                    String[] kv = p.split("=", 2);
+                    if (kv.length == 2) {
+                        String key = URLDecoder.decode(kv[0], StandardCharsets.UTF_8);
+                        String val = URLDecoder.decode(kv[1], StandardCharsets.UTF_8);
+                        if (key.equals("token")) token = val;
+                        if (key.equals("g-recaptcha-response")) recaptcha = val;
+                    }
+                }
+
+                boolean ok = cap.verifyCaptcha(token, recaptcha);
+                
+                if (ok) {
+                    cap.markSuccess(token);
+                    System.out.println("[SUBMIT] SUCCESS for token: " + token);
+                } else {
+                    cap.markFailed(token);
+                    System.out.println("[SUBMIT] FAILED for token: " + token);
+                }
+
+                String json = "{\"success\":" + ok + "}";
+                ex.getResponseHeaders().set("Content-Type", "application/json");
+                ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                byte[] resp = json.getBytes(StandardCharsets.UTF_8);
+                ex.sendResponseHeaders(200, resp.length);
+                try (OutputStream os = ex.getResponseBody()) { os.write(resp); }
+            } else {
+                ex.sendResponseHeaders(405, -1);
+            }
+        }
+    }
+
+    // Проверка токена
+    class CheckHandler implements HttpHandler {
+        public void handle(HttpExchange ex) throws IOException {
+            if ("OPTIONS".equals(ex.getRequestMethod())) {
+                ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                ex.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
+                ex.sendResponseHeaders(204, -1);
+                return;
+            }
+
             String query = ex.getRequestURI().getQuery();
             String token = null;
             if (query != null) {
@@ -55,113 +118,15 @@ public class WebServer {
                 }
             }
 
-            if (token == null || !databaseManager.isValidToken(token)) {
-                String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>" +
-                    "<title>Invalid Token</title>" +
-                    "<style>body{background:#f8d7da;display:flex;justify-content:center;" +
-                    "align-items:center;height:100vh;font-family:sans-serif;margin:0;}" +
-                    ".box{background:white;padding:40px;border-radius:20px;text-align:center;}" +
-                    "h1{color:#721c24;}</style></head><body><div class='box'>" +
-                    "<h1>Invalid or Expired Token</h1>" +
-                    "<p>This verification link is not valid or has expired.</p>" +
-                    "</div></body></html>";
-
-                ex.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
-                byte[] resp = html.getBytes(StandardCharsets.UTF_8);
-                ex.sendResponseHeaders(200, resp.length);
-                try (OutputStream os = ex.getResponseBody()) { os.write(resp); }
-                return;
-            }
-
-            String key = configManager.getSiteKey();
-            String html = "<!DOCTYPE html><html lang=\"ru\"><head><meta charset=\"UTF-8\">" +
-                "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">" +
-                "<title>Captcha Verification</title>" +
-                "<script src=\"https://www.google.com/recaptcha/api.js\" async defer></script>" +
-                "<style>" +
-                "body{display:flex;justify-content:center;align-items:center;height:100vh;" +
-                "background:linear-gradient(135deg,#1e3c72,#2a5298);font-family:sans-serif;margin:0;}" +
-                ".box{background:white;padding:40px;border-radius:20px;text-align:center;max-width:400px;" +
-                "box-shadow:0 20px 60px rgba(0,0,0,0.3);}" +
-                "h2{color:#333;margin-bottom:10px;}" +
-                "p{color:#666;margin-bottom:25px;}" +
-                "button{background:linear-gradient(135deg,#1e3c72,#2a5298);color:white;border:none;" +
-                "padding:12px 30px;border-radius:25px;font-size:16px;cursor:pointer;margin-top:15px;}" +
-                "button:hover{transform:scale(1.05);transition:0.2s;}" +
-                "</style></head><body><div class='box'>" +
-                "<h2>Security Check</h2>" +
-                "<p>Please verify you are human to continue</p>" +
-                "<form action='/verify' method='POST'>" +
-                "<input type='hidden' name='token' value='" + token + "'>" +
-                "<div class='g-recaptcha' data-sitekey='" + key + "'></div><br>" +
-                "<button type='submit'>Verify and Continue</button>" +
-                "</form></div></body></html>";
-
-            ex.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
-            byte[] resp = html.getBytes(StandardCharsets.UTF_8);
+            boolean valid = token != null && dm.isValidToken(token);
+            String player = valid ? dm.getPlayerNameByToken(token) : "unknown";
+            String json = "{\"valid\":" + valid + ",\"player\":\"" + player + "\"}";
+            
+            ex.getResponseHeaders().set("Content-Type", "application/json");
+            ex.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            byte[] resp = json.getBytes(StandardCharsets.UTF_8);
             ex.sendResponseHeaders(200, resp.length);
             try (OutputStream os = ex.getResponseBody()) { os.write(resp); }
-        }
-    }
-
-    class VerifyHandler implements HttpHandler {
-        public void handle(HttpExchange ex) throws IOException {
-            if (!"POST".equals(ex.getRequestMethod())) {
-                ex.sendResponseHeaders(405, -1);
-                return;
-            }
-
-            String body = new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            String token = null;
-            String recaptcha = "";
-
-            for (String p : body.split("&")) {
-                String[] kv = p.split("=", 2);
-                if (kv.length == 2) {
-                    if (kv[0].equals("token")) token = URLDecoder.decode(kv[1], StandardCharsets.UTF_8);
-                    if (kv[0].equals("g-recaptcha-response")) recaptcha = URLDecoder.decode(kv[1], StandardCharsets.UTF_8);
-                }
-            }
-
-            boolean ok = captchaManager.verifyCaptcha(token, recaptcha);
-
-            if (ok) {
-                captchaManager.markSuccess(token);
-                String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Success</title>" +
-                    "<style>body{background:#d4edda;display:flex;justify-content:center;" +
-                    "align-items:center;height:100vh;font-family:sans-serif;margin:0;}" +
-                    ".box{background:white;padding:40px;border-radius:20px;text-align:center;" +
-                    "box-shadow:0 10px 40px rgba(0,0,0,0.2);}" +
-                    "h1{font-size:64px;margin:0;}h2{color:#155724;}" +
-                    "</style></head><body><div class='box'>" +
-                    "<h1>OK</h1><h2>Verification Passed!</h2>" +
-                    "<p>You can now return to the game</p>" +
-                    "</div></body></html>";
-
-                ex.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
-                byte[] resp = html.getBytes(StandardCharsets.UTF_8);
-                ex.sendResponseHeaders(200, resp.length);
-                try (OutputStream os = ex.getResponseBody()) { os.write(resp); }
-            } else {
-                captchaManager.markFailed(token);
-                String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Failed</title>" +
-                    "<style>body{background:#f8d7da;display:flex;justify-content:center;" +
-                    "align-items:center;height:100vh;font-family:sans-serif;margin:0;}" +
-                    ".box{background:white;padding:40px;border-radius:20px;text-align:center;" +
-                    "box-shadow:0 10px 40px rgba(0,0,0,0.2);}" +
-                    "h1{font-size:64px;margin:0;}h2{color:#721c24;}" +
-                    "a{display:inline-block;margin-top:20px;padding:10px 20px;background:#007bff;" +
-                    "color:white;text-decoration:none;border-radius:10px;}" +
-                    "</style></head><body><div class='box'>" +
-                    "<h1>ERR</h1><h2>Verification Failed</h2>" +
-                    "<a href='/captcha?token=" + token + "'>Try Again</a>" +
-                    "</div></body></html>";
-
-                ex.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
-                byte[] resp = html.getBytes(StandardCharsets.UTF_8);
-                ex.sendResponseHeaders(200, resp.length);
-                try (OutputStream os = ex.getResponseBody()) { os.write(resp); }
-            }
         }
     }
 }
